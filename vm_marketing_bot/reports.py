@@ -38,33 +38,50 @@ def _bar(done: int, total: int, width: int = 10) -> str:
 
 
 def product_key(row) -> tuple:
-    """The same product of the same department (sent again the same week) = one task."""
-    region = (row["region"] or "").replace(" (bot tavsiyasi)", "")
-    return row["department"], (row["model"] or row["name"] or "").strip(), region.strip()
+    """The same product of the same department = one task (even if sent again)."""
+    return row["department"], (row["model"] or row["name"] or "").strip()
+
+
+def latest_runs_by_department(rows) -> dict[str, int]:
+    """For each department: the newest send that contains it = the current Excel file."""
+    latest: dict[str, int] = {}
+    for row in rows:
+        latest[row["department"]] = max(latest.get(row["department"], 0), row["run_id"])
+    return latest
 
 
 def dedupe_rows(rows: list[dict]) -> list[dict]:
-    """One row per product/department: the newest post is kept; marks from every copy are merged."""
-    merged: dict[tuple, dict] = {}
+    """Only the products of the latest Excel file count (per department). Marks made on an
+    older copy of the same product (earlier/test send) are carried over."""
+    latest = latest_runs_by_department(rows)
+    current = [r for r in rows if r["run_id"] == latest[r["department"]]]
+    keys = {product_key(r) for r in current}
+
     done_by: dict[tuple, list[str]] = {}
     for row in sorted(rows, key=lambda r: (r["run_id"], r["message_id"] or 0)):
         key = product_key(row)
-        people = [p for p in (row["done_by"] or "").split("; ") if p]
+        if key not in keys:
+            continue  # product is not in the latest file
         seen = done_by.setdefault(key, [])
-        for person in people:
+        for person in (p for p in (row["done_by"] or "").split("; ") if p):
             name = person.rsplit(" (", 1)[0]
             if all(s.rsplit(" (", 1)[0] != name for s in seen):
                 seen.append(person)
-        merged[key] = dict(row)  # newest copy wins
-    for key, row in merged.items():
-        row["done_by"] = "; ".join(done_by[key]) or None
-        row["done_count"] = len(done_by[key])
-    return list(merged.values())
+
+    result = []
+    for row in current:
+        row = dict(row)
+        people = done_by.get(product_key(row), [])
+        row["done_by"] = "; ".join(people) or None
+        row["done_count"] = len(people)
+        result.append(row)
+    return result
 
 
 def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes | None]:
     store = app.store
     rows = dedupe_rows([dict(r) for r in store.report_rows(run_ids)])
+    current_keys = {product_key(r) for r in rows}
     if not rows:
         return f"📊 <b>{escape(title)}</b>\n\nBu davrda hech narsa yuborilmagan.", None
 
@@ -83,6 +100,8 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
     people = Counter()
     counted: set[tuple] = set()
     for c in store.confirmation_rows(run_ids):
+        if product_key(c) not in current_keys:
+            continue  # product not in the latest file
         task = (c["user_id"], *product_key(c))
         if task in counted:  # same person marked two copies of the same product
             continue

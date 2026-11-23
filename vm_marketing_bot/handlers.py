@@ -572,15 +572,16 @@ def clear_menu_text(app: App) -> str:
     run_ids = _week_runs(app)
     all_posts = app.store.posts_of_runs(run_ids)
     posts = len(all_posts)
-    duplicates = posts - len({reports.product_key(p) for p in all_posts})
+    latest = reports.latest_runs_by_department(all_posts)
+    duplicates = sum(1 for p in all_posts if p["run_id"] != latest[p["department"]])  # posts of older sends
     marks = app.store.confirmation_count(run_ids)
     return (
         "🧹 <b>Shu haftani tozalash</b>\n\n"
         f"Yuborishlar: {len(run_ids)} ta · postlar: {posts} ta · ✅ belgilar: {marks} ta\n\n"
         "🧹 <b>Belgilarni tozalash</b> — barcha \"✅ Bajarildi\" belgilari o'chadi, "
         "postlar guruhda qoladi, hisobot 0 dan boshlanadi.\n"
-        f"♻️ <b>Takrorlarni o'chirish</b> — bir mahsulot bir necha marta yuborilgan bo'lsa "
-        f"(hozir {duplicates} ta takror), eskilari guruhdan o'chiriladi, eng yangisi qoladi; "
+        f"♻️ <b>Takrorlarni o'chirish</b> — fayl bir necha marta yuborilgan bo'lsa, faqat oxirgi "
+        f"yuborish qoladi, eski postlar (hozir {duplicates} ta) guruhdan o'chiriladi; "
         "belgilar saqlanadi.\n"
         "🗑 <b>Yuborishni o'chirish</b> — test uchun: shu haftaning postlari guruhdan va "
         "bazadan o'chiriladi."

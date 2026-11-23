@@ -296,6 +296,36 @@ def test_report_to_group_button(app, template, fake_bot):
     assert "guruhga yuborildi" in texts[-1]
 
 
+def test_report_counts_only_latest_file(app, template, fake_bot, tmp_path):
+    """Test sends of an older/different file this week must not inflate the report."""
+    from openpyxl import load_workbook
+
+    old = tmp_path / "old.xlsx"
+    wb = load_workbook(template)
+    ws = wb.active
+    region_col = next(c.column for c in ws[1] if c.value == "Region")
+    for r in range(2, ws.max_row + 1):  # older version: different regions
+        ws.cell(r, region_col).value = "Toshkent"
+    ws.append(["Photo", "ESKI MAHSULOT", "X", "X", "X", "OLD00001"] + [None] * (ws.max_column - 6))
+    ws.cell(ws.max_row, ws.max_column - 1).value = "VM"
+    wb.save(old)
+
+    old_result = load_products(old)
+    job = SendJob(result=old_result, departments=["VM", "MARKETING"],
+                  targets={"VM": -1001, "MARKETING": -1001}, report_chat_id=555,
+                  started_by="Admin", week=week_label())
+    asyncio.run(app.sender.run(job, None))
+    old_post = next(p for p in _posts(app) if p["department"] == "VM" and p["model"] != "OLD00001")
+    press(app, old_post["id"], user_id=10, name="Diyor")  # marked on the OLD copy
+
+    current, _ = run_send(app, template)  # the real file
+    runs = [r["id"] for r in app.store.last_runs(5)]
+    text, _ = reports.build_report(app, runs, "t")
+    assert f"/{current.count('VM')} bajarildi" in text
+    assert f"/{current.count('MARKETING')} bajarildi" in text
+    assert "1/" in text  # the old mark still counts for the same product
+
+
 def test_flood_control_slows_down(settings, fake_bot, tmp_path):
     from vm_marketing_bot.sender import MAX_INTERVAL
 
