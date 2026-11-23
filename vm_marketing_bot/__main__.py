@@ -47,6 +47,7 @@ async def main() -> None:
         BotCommand(command="load", description="Serverdagi Excel faylni ochish"),
         BotCommand(command="report", description="Shu haftaning hisoboti"),
         BotCommand(command="template", description="Bo'sh shablon"),
+        BotCommand(command="clear", description="Shu haftaning belgilarini / test yuborishni tozalash"),
         BotCommand(command="cancel", description="Yuborishni to'xtatish"),
         BotCommand(command="chatid", description="Chat ID"),
     ])

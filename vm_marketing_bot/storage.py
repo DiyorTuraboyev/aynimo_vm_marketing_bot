@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS posts (
     caption     TEXT,
     created_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS run_messages (
+    run_id     INTEGER NOT NULL,
+    chat_id    TEXT NOT NULL,
+    message_id INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS confirmations (
     post_id      INTEGER NOT NULL,
     user_id      INTEGER NOT NULL,
@@ -174,6 +179,70 @@ class Storage:
             return
         marks = ",".join("?" for _ in run_ids)
         self._exec(f"UPDATE runs SET report_sent_at = ? WHERE id IN ({marks})", (_now(), *run_ids))
+
+    # ---- cleaning (admin /clear) ------------------------------------------
+    def posts_of_runs(self, run_ids: list[int], only_confirmed: bool = False) -> list[sqlite3.Row]:
+        if not run_ids:
+            return []
+        marks = ",".join("?" for _ in run_ids)
+        extra = " AND id IN (SELECT post_id FROM confirmations)" if only_confirmed else ""
+        return self._all(
+            f"SELECT * FROM posts WHERE run_id IN ({marks}) AND message_id IS NOT NULL{extra}",
+            tuple(run_ids),
+        )
+
+    def add_run_message(self, run_id: int, chat_id, message_id: int) -> None:
+        """Extra messages of a send (department headers) — so /clear can delete them too."""
+        self._exec(
+            "INSERT INTO run_messages(run_id, chat_id, message_id) VALUES (?, ?, ?)",
+            (run_id, str(chat_id), message_id),
+        )
+
+    def run_messages(self, run_ids: list[int]) -> list[sqlite3.Row]:
+        if not run_ids:
+            return []
+        marks = ",".join("?" for _ in run_ids)
+        return self._all(f"SELECT * FROM run_messages WHERE run_id IN ({marks})", tuple(run_ids))
+
+    def confirmation_count(self, run_ids: list[int]) -> int:
+        if not run_ids:
+            return 0
+        marks = ",".join("?" for _ in run_ids)
+        rows = self._all(
+            f"SELECT COUNT(*) AS n FROM confirmations WHERE post_id IN "
+            f"(SELECT id FROM posts WHERE run_id IN ({marks}))",
+            tuple(run_ids),
+        )
+        return int(rows[0]["n"])
+
+    def clear_confirmations(self, run_ids: list[int]) -> int:
+        """Removes every 'Bajarildi' mark of these runs. Returns how many were removed."""
+        if not run_ids:
+            return 0
+        marks = ",".join("?" for _ in run_ids)
+        with self._lock:
+            cur = self._conn.execute(
+                f"DELETE FROM confirmations WHERE post_id IN (SELECT id FROM posts WHERE run_id IN ({marks}))",
+                tuple(run_ids),
+            )
+            self._conn.execute(f"UPDATE runs SET report_sent_at = NULL WHERE id IN ({marks})", tuple(run_ids))
+            self._conn.commit()
+            return cur.rowcount
+
+    def delete_runs(self, run_ids: list[int]) -> None:
+        """Forget these sends completely (posts, marks, run records)."""
+        if not run_ids:
+            return
+        marks = ",".join("?" for _ in run_ids)
+        with self._lock:
+            self._conn.execute(
+                f"DELETE FROM confirmations WHERE post_id IN (SELECT id FROM posts WHERE run_id IN ({marks}))",
+                tuple(run_ids),
+            )
+            self._conn.execute(f"DELETE FROM posts WHERE run_id IN ({marks})", tuple(run_ids))
+            self._conn.execute(f"DELETE FROM run_messages WHERE run_id IN ({marks})", tuple(run_ids))
+            self._conn.execute(f"DELETE FROM runs WHERE id IN ({marks})", tuple(run_ids))
+            self._conn.commit()
 
     def run_chats(self, run_ids: list[int]) -> list[str]:
         if not run_ids:

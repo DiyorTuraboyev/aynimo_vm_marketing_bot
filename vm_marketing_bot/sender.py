@@ -212,7 +212,9 @@ class Sender:
                         if not job.sample:
                             header = department_header(dept, job.result.for_department(dept), job.week)
                             try:
-                                await tg_retry(lambda c=chat, h=header: self.bot.send_message(c, h))
+                                head_msg = await tg_retry(lambda c=chat, h=header: self.bot.send_message(c, h))
+                                if run_id is not None:
+                                    self.store.add_run_message(run_id, chat, head_msg.message_id)
                             except Exception as exc:
                                 if _is_fatal(exc):
                                     job.fatal = f"{title} chatiga yuborib bo'lmadi: {exc}"

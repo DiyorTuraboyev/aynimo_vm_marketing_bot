@@ -109,5 +109,52 @@ def test_no_report_on_other_days(app, template, fake_bot, monkeypatch):
     assert not fake_bot.sent
 
 
+def clear(app, bot, action):
+    texts = []
+
+    class Msg:
+        async def edit_text(self, text, reply_markup=None):
+            texts.append(text)
+
+    async def answer(text=None, show_alert=False):
+        pass
+
+    callback = SimpleNamespace(data=f"clr:go:{action}", from_user=SimpleNamespace(id=1, full_name="Admin"),
+                               message=Msg(), answer=answer)
+    asyncio.run(handlers.cb_clear(callback, bot, app))
+    return texts[-1]
+
+
+def test_clear_marks(app, template, fake_bot, monkeypatch):
+    monkeypatch.setattr(handlers.asyncio, "sleep", _no_sleep)
+    run_send(app, template)
+    vm_post = next(p["id"] for p in _posts(app) if p["department"] == "VM")
+    press(app, vm_post, user_id=10, name="Diyor")
+    assert app.store.confirmations(vm_post)
+
+    fake_bot.sent.clear()
+    result = clear(app, fake_bot, "marks")
+    assert "1 ta belgi" in result
+    assert not app.store.confirmations(vm_post)
+    edits = [s for s in fake_bot.sent if s[0] == "edit"]
+    assert len(edits) == 1 and "Bajardi" not in edits[0][3]  # caption restored
+    assert _posts(app)  # posts are kept
+
+
+def test_clear_sends(app, template, fake_bot):
+    result_products, _ = run_send(app, template)
+    fake_bot.sent.clear()
+    result = clear(app, fake_bot, "sends")
+    deleted = sum(len(s[2]) for s in fake_bot.sent if s[0] == "delete")
+    assert deleted == len(result_products.products) + 2  # posts + 2 department headers
+    assert "o'chirildi" in result
+    assert not _posts(app)
+    assert not app.store.last_runs()
+
+
+async def _no_sleep(*_):
+    return None
+
+
 def _posts(app):
     return app.store._all("SELECT * FROM posts ORDER BY id")

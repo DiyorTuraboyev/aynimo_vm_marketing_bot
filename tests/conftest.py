@@ -64,6 +64,16 @@ class FakeBot:
     async def send_document(self, chat_id, document):
         self.sent.append(("doc", chat_id, document.filename, document.data))
 
+    async def edit_message_caption(self, chat_id, message_id, caption, reply_markup=None):
+        self.sent.append(("edit", chat_id, message_id, caption))
+
+    async def edit_message_text(self, text, chat_id, message_id, reply_markup=None):
+        self.sent.append(("edit", chat_id, message_id, text))
+
+    async def delete_messages(self, chat_id, message_ids):
+        self.sent.append(("delete", chat_id, list(message_ids)))
+        return True
+
 
 @pytest.fixture
 def fake_bot():
