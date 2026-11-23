@@ -40,16 +40,25 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
+    env:
+      PANEL_URL: ${{ secrets.PANEL_URL }}
+      PANEL_API_KEY: ${{ secrets.PANEL_API_KEY }}
+      SERVER_ID: ${{ secrets.SERVER_ID }}
     steps:
+      - name: Secrets not set — skipping deploy
+        if: env.PANEL_API_KEY == '' || env.PANEL_URL == '' || env.SERVER_ID == ''
+        run: |
+          echo "::notice::Deploy skipped: add PANEL_URL, PANEL_API_KEY, SERVER_ID secrets to deploy automatically."
+          echo "Until then restart the server in the panel — it pulls the latest code from GitHub on start."
+
       - uses: actions/checkout@v4
+        if: env.PANEL_API_KEY != '' && env.PANEL_URL != '' && env.SERVER_ID != ''
 
       - uses: actions/setup-python@v5
+        if: env.PANEL_API_KEY != '' && env.PANEL_URL != '' && env.SERVER_ID != ''
         with:
           python-version: "3.11"
 
       - name: Upload code & restart bot
-        env:
-          PANEL_URL: ${{ secrets.PANEL_URL }}
-          PANEL_API_KEY: ${{ secrets.PANEL_API_KEY }}
-          SERVER_ID: ${{ secrets.SERVER_ID }}
+        if: env.PANEL_API_KEY != '' && env.PANEL_URL != '' && env.SERVER_ID != ''
         run: python scripts/deploy_pterodactyl.py
