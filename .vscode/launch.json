@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "VM & Marketing bot",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "vm_marketing_bot",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

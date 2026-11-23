@@ -1,0 +1,19 @@
+# secrets — NEVER commit
+.env
+
+# local environment / IDE
+.venv/
+venv/
+.idea/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# bot runtime data (database, uploaded Excel files, logs)
+vm_marketing_data/
+*.db
+*.log
+
+# build artifacts
+*.zip
