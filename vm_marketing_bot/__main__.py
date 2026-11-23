@@ -24,7 +24,7 @@ def setup_logging(settings) -> None:
     console = logging.StreamHandler()
     console.setFormatter(fmt)
     file = RotatingFileHandler(
-        settings.data_dir / "bot.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+        settings.data_dir / "bot.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8"
     )
     file.setFormatter(fmt)
     root.addHandler(console)

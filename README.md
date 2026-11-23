@@ -85,6 +85,7 @@ git push -u origin main
 | Column | Notes |
 |---|---|
 | `Department` | **Required.** `VM` or `MARKETING` (`VM/MARKETING` → the product is posted for both). |
+| `Region` | Optional. `Hamma` = all stores; `Buxoro, Qarshi` = only those regions' stores are shown (+ `#Buxoro` hashtags); `... ostatka bor do'konlarda` = only stores with stock. Store → region mapping: `config.py → STORE_REGIONS`. |
 | `Comment` | Note shown on the post. A repeated `VM`/`MARKETING` at the start is removed. (Old files without `Department`: the department is read from the start of `Comment`.) |
 | `Модель` / `Наименование` | at least one required |
 | `Бренд`, `Категория`, `Подкатегория`, `PRICE`, `PHOTO_PATH`, `stock` | optional |
@@ -94,5 +95,8 @@ git push -u origin main
 
 ## Data on the server
 
-`vm_marketing_data/` — `vm_marketing.db` (posts, confirmations, reports), uploaded Excel files, `bot.log`.
+`vm_marketing_data/` — `vm_marketing.db` (posts, confirmations, reports), the last 8 uploaded Excel files
+(older ones and unreadable uploads are deleted automatically), `bot.log` (max ~2 MB).
+`/load` opens the most recently uploaded file. Excel files over 10 MB are refused (pictures pasted inside —
+the bot takes photos from `PHOTO_PATH` itself).
 Deploys never touch it. Download `vm_marketing.db` from the panel now and then as a backup.

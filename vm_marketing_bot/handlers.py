@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 router = Router(name="vm_marketing")
 
 PRESS_DEBOUNCE_SECONDS = 20
+MAX_UPLOAD_BYTES = 10_000_000  # a weekly Excel is ~15 KB; 10 MB means pictures were pasted inside
 
 
 @dataclass
@@ -55,7 +56,7 @@ def start_keyboard(app: App) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"📂 Serverdagi faylni ochish ({app.settings.excel_file.name})",
+                text=f"📂 Oxirgi faylni ochish ({latest_excel(app).name[-40:]})",
                 callback_data="load:default",
             )],
             [InlineKeyboardButton(text="📊 Shu haftaning hisoboti", callback_data="report:week")],
@@ -117,16 +118,39 @@ async def deny(event: Message | CallbackQuery) -> None:
         await event.answer(text)
 
 
-async def show_preview(app: App, bot: Bot, user_id: int, chat_id: int, path, edit: Message | None = None) -> None:
+KEEP_UPLOADS = 8  # weekly files kept on the server (512 MB disk) — older ones are deleted
+
+
+def uploads_dir(app: App):
+    return app.settings.data_dir / "uploads"
+
+
+def latest_excel(app: App):
+    """The most recently uploaded weekly file, or the template shipped with the bot."""
+    files = sorted(uploads_dir(app).glob("*.xls*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else app.settings.excel_file
+
+
+def cleanup_uploads(app: App) -> None:
+    files = sorted(uploads_dir(app).glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[KEEP_UPLOADS:]:
+        try:
+            old.unlink()
+        except OSError as exc:
+            log.warning("Could not delete %s: %s", old, exc)
+
+
+async def show_preview(app: App, bot: Bot, user_id: int, chat_id: int, path, edit: Message | None = None) -> bool:
+    """Reads the Excel and shows the summary. Returns False if the file could not be read."""
     try:
         result = await asyncio.to_thread(load_products, path)
     except (ExcelFormatError, FileNotFoundError) as exc:
         await bot.send_message(chat_id, f"❌ {escape(str(exc))}")
-        return
+        return False
     except Exception as exc:
         log.exception("Excel read failed")
         await bot.send_message(chat_id, f"❌ Excelni o'qib bo'lmadi:\n<code>{escape(str(exc))}</code>")
-        return
+        return False
 
     app.loaded[user_id] = result
     text = preview_text(result, week_label(), await targets_text(app, bot, chat_id))
@@ -136,10 +160,11 @@ async def show_preview(app: App, bot: Bot, user_id: int, chat_id: int, path, edi
     if edit is not None:
         try:
             await edit.edit_text(text, reply_markup=keyboard)
-            return
+            return True
         except TelegramBadRequest:
             pass
     await bot.send_message(chat_id, text, reply_markup=keyboard)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +219,7 @@ async def cmd_chatid(message: Message, app: App) -> None:
 async def cmd_load(message: Message, bot: Bot, app: App) -> None:
     if not app.settings.is_admin(message.from_user and message.from_user.id):
         return await deny(message)
-    await show_preview(app, bot, message.from_user.id, message.chat.id, app.settings.excel_file)
+    await show_preview(app, bot, message.from_user.id, message.chat.id, latest_excel(app))
 
 
 @router.message(Command("template"))
@@ -232,9 +257,18 @@ async def on_document(message: Message, bot: Bot, app: App) -> None:
 
     stamp = now().strftime("%Y%m%d_%H%M%S")
     safe = "".join(c if c.isalnum() or c in "._- " else "_" for c in name)
-    path = app.settings.data_dir / "uploads" / f"{stamp}_{safe}"
+    if doc.file_size and doc.file_size > MAX_UPLOAD_BYTES:
+        await message.answer(
+            f"❌ Fayl juda katta ({doc.file_size // 1_000_000} MB). "
+            "Rasmlarni Excel ichidan olib tashlang — bot rasmlarni PHOTO_PATH orqali o'zi oladi."
+        )
+        return
+    path = uploads_dir(app) / f"{stamp}_{safe}"
     await bot.download(doc, destination=path)
-    await show_preview(app, bot, message.from_user.id, message.chat.id, path)
+    if await show_preview(app, bot, message.from_user.id, message.chat.id, path):
+        cleanup_uploads(app)
+    else:
+        path.unlink(missing_ok=True)  # unreadable file — don't keep it on the small disk
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +282,7 @@ async def cb_load_default(callback: CallbackQuery, bot: Bot, app: App) -> None:
     await callback.answer("Fayl o'qilmoqda...")
     await show_preview(
         app, bot, callback.from_user.id, callback.message.chat.id,
-        app.settings.excel_file, edit=callback.message,
+        latest_excel(app), edit=callback.message,
     )
 
 

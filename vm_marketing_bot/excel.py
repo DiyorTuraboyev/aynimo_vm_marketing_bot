@@ -31,7 +31,35 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "stock": ("stock", "total stock", "qoldiq", "остаток", "jami qoldiq"),
     "comment": ("comment", "comments", "izoh", "комментарий", "коммент"),
     "department": ("department", "dept", "bo'lim", "bolim", "bo‘lim", "отдел", "департамент"),
+    "region": ("region", "regions", "регион", "hudud", "viloyat", "shahar"),
 }
+
+ALL_REGION_WORDS = {"hamma", "barcha", "hammasi", "all", "все", "umumiy"}
+IN_STOCK_RE = re.compile(r"ostatka\s+bor|qoldiq\s+bor|остаток\s+есть|в\s+наличии", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class RegionInfo:
+    text: str  # as written in Excel, shown on the post
+    regions: tuple[str, ...]  # recognised region names (canonical spelling); empty = all
+    in_stock_only: bool  # "ostatka bor do'konlarda" -> hide stores without stock
+
+    @property
+    def is_all(self) -> bool:
+        return not self.regions
+
+
+def parse_region(text: str) -> RegionInfo:
+    from .config import STORE_REGIONS
+
+    known = {r.lower(): r for r in STORE_REGIONS.values()}
+    regions: list[str] = []
+    for part in re.split(r"[,;/+]|\s+va\s+|\s+и\s+", text or ""):
+        word = part.strip().lower()
+        if word in known and known[word] not in regions:
+            regions.append(known[word])
+    in_stock = bool(IN_STOCK_RE.search(text or ""))
+    return RegionInfo(text=(text or "").strip(), regions=tuple(regions), in_stock_only=in_stock)
 
 STORE_RE = re.compile(r"^(s\d{1,3})(?:\s*stock)?$")
 WAREHOUSE_RE = re.compile(r"^(w\d{1,3})(?:\s*stock)?$")
@@ -121,6 +149,20 @@ class Product:
     total_stock: int | None
     stores: dict[str, int | None]  # "S01" -> qty (ordered as in Excel)
     warehouses: dict[str, int | None]  # "W1" -> qty
+    region: RegionInfo = field(default_factory=lambda: RegionInfo("", (), False))
+
+    def target_stores(self) -> dict[str, int | None]:
+        """Stores this task is for: filtered by the Region column (and by stock
+        when the region says "ostatka bor do'konlarda")."""
+        from .config import STORE_REGIONS
+
+        stores = self.stores
+        if self.region.regions:
+            wanted = set(self.region.regions)
+            stores = {c: v for c, v in stores.items() if STORE_REGIONS.get(c) in wanted}
+        if self.region.in_stock_only:
+            stores = {c: v for c, v in stores.items() if v is None or v > 0}
+        return stores
 
     @property
     def title(self) -> str:
@@ -270,6 +312,13 @@ def load_products(path: str | Path) -> LoadResult:
         store_values = {code: parse_int(values[col]) for code, col in stores.items()}
         warehouse_values = {code: parse_int(values[col]) for code, col in warehouses.items()}
         photo = clean_text(cell(values, "photo")).replace("\\", "/")
+        region = parse_region(clean_text(cell(values, "region")))
+        if region.text and not region.regions:
+            words = {w.strip().lower() for w in re.split(r"[,;/+]", region.text)}
+            if not words & ALL_REGION_WORDS and not region.in_stock_only:
+                result.warnings.append(
+                    f"{ident}: Region '{region.text[:30]}' tanilmadi — barcha do'konlar ko'rsatiladi"
+                )
 
         negatives = [f"{c} ({v})" for c, v in store_values.items() if v is not None and v < 0]
         if negatives:
@@ -295,6 +344,7 @@ def load_products(path: str | Path) -> LoadResult:
                     total_stock=parse_int(cell(values, "stock")),
                     stores=dict(store_values),
                     warehouses=dict(warehouse_values),
+                    region=region,
                 )
             )
 

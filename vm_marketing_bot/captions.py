@@ -45,7 +45,8 @@ def hashtag(text: str) -> str:
 
 
 def store_table(product: Product) -> str:
-    cells = [(code, product.stores[code]) for code in product.stores]
+    stores = product.target_stores()
+    cells = [(code, stores[code]) for code in stores]
     cells += [(code, product.warehouses[code]) for code in product.warehouses]
     if not cells:
         return ""
@@ -76,7 +77,7 @@ def _region_summary(product: Product) -> str:
 
 def _top_stores(product: Product, limit: int = 3) -> str:
     ranked = sorted(
-        ((c, v) for c, v in product.stores.items() if v is not None and v > 0),
+        ((c, v) for c, v in product.target_stores().items() if v is not None and v > 0),
         key=lambda item: item[1],
         reverse=True,
     )[:limit]
@@ -86,8 +87,9 @@ def _top_stores(product: Product, limit: int = 3) -> str:
 
 
 def _stock_alerts(product: Product) -> list[str]:
-    empty = [c for c, v in product.stores.items() if v == 0]
-    negative = [f"{c} ({v})" for c, v in product.stores.items() if v is not None and v < 0]
+    stores = product.target_stores()
+    empty = [c for c, v in stores.items() if v == 0]
+    negative = [f"{c} ({v})" for c, v in stores.items() if v is not None and v < 0]
     lines = []
     if empty:
         lines.append("⚠️ Qoldiq yo'q: " + ", ".join(empty))
@@ -100,6 +102,8 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
     icon, title = DEPARTMENT_TITLES[product.department]
 
     head = [f"{icon} <b>{title}</b> · {escape(week)}"]
+    if product.region.text:
+        head.append(f"📍 <b>Hudud:</b> {escape(product.region.text)}")
     if product.note:
         head.append(f"💬 <b>Izoh:</b> <i>{escape(product.note)}</i>")
 
@@ -114,18 +118,25 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
     info.append(f"💰 Narxi: {fmt_price(product.price_raw)}")
 
     total = product.stock_total()
-    stock = [f"📦 Jami qoldiq: <b>{fmt_qty(total)}</b> ta"]
+    stock_line = f"📦 Jami qoldiq: <b>{fmt_qty(total)}</b> ta"
+    if product.region.regions:
+        in_region = [v for v in product.target_stores().values() if v is not None]
+        if in_region:
+            stock_line += f" · hududda: <b>{sum(in_region)}</b> ta"
+    stock = [stock_line]
     table = store_table(product)
 
     extra = _stock_alerts(product)
     if product.department == "MARKETING":
-        region = _region_summary(product)
+        # The automatic "advertise here" hint only when the Excel does not name regions.
+        region = _region_summary(product) if product.region.is_all else ""
         top = _top_stores(product)
         extra = ([region] if region else []) + ([top] if top else []) + extra
 
     tags = " ".join(
         t for t in (
             f"#{product.department}",
+            *(hashtag(r) for r in product.region.regions),
             hashtag(product.subcategory),
             hashtag(product.model) if product.model != product.name else "",
         ) if t

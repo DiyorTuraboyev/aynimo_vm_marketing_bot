@@ -116,6 +116,42 @@ def test_department_column_rules(tmp_path):
     assert any("A6" in w for w in result.warnings)
 
 
+def test_region_parsing():
+    from vm_marketing_bot.excel import parse_region
+
+    r = parse_region("Buxoro, Qarshi")
+    assert r.regions == ("Buxoro", "Qarshi") and not r.in_stock_only
+    r = parse_region("Hamma, ostatka bor do'konlarda")
+    assert r.is_all and r.in_stock_only
+    assert parse_region("Hamma").is_all
+    assert parse_region("toshkent").regions == ("Toshkent",)
+
+
+def test_region_filters_store_table(tmp_path):
+    path = tmp_path / "r.xlsx"
+    write_xlsx(path, {
+        "Модель": ["A1", "A2"],
+        "s01": [5, 0], "s02": [3, 4], "s07": [9, 7],  # S01 Buxoro, S02 Qarshi, S07 Toshkent
+        "Region": ["Buxoro, Qarshi", "Hamma, ostatka bor do'konlarda"],
+        "Department": ["MARKETING", "VM"],
+    })
+    a1, a2 = load_products(path).products
+    assert set(a1.target_stores()) == {"S01", "S02"}
+    caption = build_caption(a1, "w")
+    assert "📍 <b>Hudud:</b> Buxoro, Qarshi" in caption
+    assert "#Buxoro" in caption and "#Qarshi" in caption
+    assert "S07" not in caption
+    assert "Reklama regioni" not in caption  # regions given by the Excel, no auto hint
+    assert set(a2.target_stores()) == {"S02", "S07"}  # S01 has 0 -> hidden
+
+
+def test_unknown_region_warns(tmp_path):
+    path = tmp_path / "u.xlsx"
+    write_xlsx(path, {"Модель": ["A1"], "s01": [1], "Region": ["Andijon"], "Department": ["VM"]})
+    result = load_products(path)
+    assert result.products and any("Andijon" in w for w in result.warnings)
+
+
 def test_missing_department_and_comment_columns(tmp_path):
     path = tmp_path / "bad.xlsx"
     write_xlsx(path, {"Модель": ["X1"], "PRICE": [100]})

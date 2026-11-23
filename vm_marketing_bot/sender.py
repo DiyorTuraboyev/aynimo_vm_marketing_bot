@@ -231,7 +231,7 @@ class Sender:
                     if run_id is not None and self.settings.done_button:
                         post_id = self.store.create_post(
                             run_id, dept, job.week, product.row, product.model,
-                            product.name, product.note, chat, caption,
+                            product.name, product.note, chat, caption, region=product.region.text,
                         )
                         keyboard = done_keyboard(post_id)
 

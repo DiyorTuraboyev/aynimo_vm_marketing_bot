@@ -66,7 +66,8 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
             label = r["model"] or ""
             if r["name"] and r["name"] != r["model"]:
                 label = f"{label} — {r['name']}" if label else r["name"]
-            lines.append(f"• {escape(str(label))[:90]}")
+            region = f" · 📍{r['region']}" if r.get("region") else ""
+            lines.append(f"• {escape(str(label))[:80]}{escape(region)[:40]}")
         if len(pending) > 15:
             lines.append(f"… yana {len(pending) - 15} ta (Excel faylda)")
 
@@ -89,7 +90,7 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
 
 EXCEL_COLUMNS = [
     ("run_id", "Run"), ("week", "Hafta"), ("department", "Bo'lim"), ("excel_row", "Excel qator"),
-    ("model", "Модель"), ("name", "Наименование"), ("note", "Izoh"), ("chat_id", "Chat"),
+    ("model", "Модель"), ("name", "Наименование"), ("region", "Hudud"), ("note", "Izoh"), ("chat_id", "Chat"),
     ("message_id", "Xabar ID"), ("created_at", "Yuborilgan"), ("status", "Holat"),
     ("done_count", "Bajarganlar soni"), ("done_by", "Kim bajardi"),
 ]

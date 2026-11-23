@@ -67,6 +67,9 @@ class Storage:
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(runs)")}
             if "report_sent_at" not in columns:  # migration for older databases
                 self._conn.execute("ALTER TABLE runs ADD COLUMN report_sent_at TEXT")
+            post_columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(posts)")}
+            if "region" not in post_columns:
+                self._conn.execute("ALTER TABLE posts ADD COLUMN region TEXT")
             self._conn.commit()
 
     def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -109,11 +112,11 @@ class Storage:
         )
 
     def create_post(self, run_id: int, department: str, week: str, excel_row: int,
-                    model: str, name: str, note: str, chat_id, caption: str) -> int:
+                    model: str, name: str, note: str, chat_id, caption: str, region: str = "") -> int:
         cur = self._exec(
-            "INSERT INTO posts(run_id, department, week, excel_row, model, name, note, chat_id, caption, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (run_id, department, week, excel_row, model, name, note, str(chat_id), caption, _now()),
+            "INSERT INTO posts(run_id, department, week, excel_row, model, name, note, chat_id, caption, "
+            "created_at, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, department, week, excel_row, model, name, note, str(chat_id), caption, _now(), region),
         )
         return int(cur.lastrowid)
 
@@ -198,7 +201,7 @@ class Storage:
         marks = ",".join("?" for _ in run_ids)
         return self._all(
             f"""
-            SELECT p.run_id, p.week, p.department, p.excel_row, p.model, p.name, p.note,
+            SELECT p.run_id, p.week, p.department, p.excel_row, p.model, p.name, p.region, p.note,
                    p.chat_id, p.message_id, p.created_at,
                    COUNT(c.user_id) AS done_count,
                    GROUP_CONCAT(c.user_name || ' (' || c.confirmed_at || ')', '; ') AS done_by
