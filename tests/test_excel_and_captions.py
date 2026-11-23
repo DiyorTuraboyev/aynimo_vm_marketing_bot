@@ -81,9 +81,14 @@ def test_captions_are_valid_and_fit(template):
         assert_valid_telegram_html(confirmed)
 
         assert "Reklama regioni" not in caption  # removed on request: only "Hudud" is shown
+        assert "💬 <b>Izoh:</b>" in caption  # comment line on every post, empty if no comment
+        if not p.note:
+            assert "💬 <b>Izoh:</b>\n" in caption
 
     for dept in ("VM", "MARKETING"):
-        assert_valid_telegram_html(department_header(dept, result.for_department(dept), week))
+        header = department_header(dept, result.for_department(dept), week)
+        assert_valid_telegram_html(header)
+        assert "Izoh" not in header  # comments are not listed before the products
     assert_valid_telegram_html(preview_text(result, week, {"VM": "Guruh", "MARKETING": "Guruh"}))
 
 

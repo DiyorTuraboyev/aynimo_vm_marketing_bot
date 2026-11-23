@@ -100,8 +100,8 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
             )
     elif region.text:
         head.append(f"📍 <b>Hudud: {escape(region.text)}</b>")
-    if product.note:
-        head.append(f"💬 <b>Izoh:</b> <i>{escape(product.note)}</i>")
+    # Every post has the comment line; empty when the Excel has no comment for this product.
+    head.append(f"💬 <b>Izoh:</b> <i>{escape(product.note)}</i>" if product.note else "💬 <b>Izoh:</b>")
 
     info = [f"🏷 <b>{escape(product.title)}</b>"]
     if product.brand:
@@ -173,24 +173,12 @@ def with_confirmations(caption: str, people: list[tuple[str, str]], limit: int) 
 
 def department_header(department: str, products: list[Product], week: str) -> str:
     icon, title = DEPARTMENT_TITLES[department]
-    lines = [
+    # Short separator only — comments are shown on each product post, not listed here.
+    return "\n".join([
         f"{icon} <b>{title} — haftalik mahsulotlar</b>",
         f"📅 {escape(week)}",
         f"🧾 Jami: <b>{len(products)}</b> ta mahsulot",
-    ]
-    notes: dict[str, int] = {}
-    for p in products:
-        if p.note:
-            notes[p.note] = notes.get(p.note, 0) + 1
-    if notes:
-        lines.append("")
-        lines.append("💬 <b>Izohlar:</b>")
-        for note, count in notes.items():
-            lines.append(f"• {escape(note)}" + (f" ({count} ta)" if count > 1 else ""))
-    text = "\n".join(lines)
-    if len(text) > TEXT_LIMIT:
-        text = text[: text.rfind("\n", 0, TEXT_LIMIT - 10)] + "\n…"
-    return text
+    ])
 
 
 def preview_text(result: LoadResult, week: str, targets: dict[str, str]) -> str:
