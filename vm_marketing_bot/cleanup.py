@@ -29,11 +29,17 @@ log = logging.getLogger(__name__)
 async def delete_run_messages(bot: Bot, store: Storage, run_ids: list[int]) -> tuple[int, int]:
     """Deletes the product posts and headers of these sends from Telegram.
     Returns (deleted, failed)."""
+    targets = [(p["chat_id"], p["message_id"]) for p in store.posts_of_runs(run_ids)]
+    targets += [(m["chat_id"], m["message_id"]) for m in store.run_messages(run_ids)]
+    return await delete_messages(bot, targets)
+
+
+async def delete_messages(bot: Bot, targets: list[tuple]) -> tuple[int, int]:
+    """Deletes (chat_id, message_id) pairs, 100 per request. Returns (deleted, failed)."""
     by_chat: dict[str, list[int]] = {}
-    for post in store.posts_of_runs(run_ids):
-        by_chat.setdefault(post["chat_id"], []).append(post["message_id"])
-    for extra in store.run_messages(run_ids):
-        by_chat.setdefault(extra["chat_id"], []).append(extra["message_id"])
+    for chat_id, message_id in targets:
+        if message_id:
+            by_chat.setdefault(chat_id, []).append(message_id)
 
     deleted = failed = 0
     for chat_id, ids in by_chat.items():

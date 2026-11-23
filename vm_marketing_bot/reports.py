@@ -37,9 +37,34 @@ def _bar(done: int, total: int, width: int = 10) -> str:
     return "🟩" * filled + "⬜" * (width - filled)
 
 
+def product_key(row) -> tuple:
+    """The same product of the same department (sent again the same week) = one task."""
+    region = (row["region"] or "").replace(" (bot tavsiyasi)", "")
+    return row["department"], (row["model"] or row["name"] or "").strip(), region.strip()
+
+
+def dedupe_rows(rows: list[dict]) -> list[dict]:
+    """One row per product/department: the newest post is kept; marks from every copy are merged."""
+    merged: dict[tuple, dict] = {}
+    done_by: dict[tuple, list[str]] = {}
+    for row in sorted(rows, key=lambda r: (r["run_id"], r["message_id"] or 0)):
+        key = product_key(row)
+        people = [p for p in (row["done_by"] or "").split("; ") if p]
+        seen = done_by.setdefault(key, [])
+        for person in people:
+            name = person.rsplit(" (", 1)[0]
+            if all(s.rsplit(" (", 1)[0] != name for s in seen):
+                seen.append(person)
+        merged[key] = dict(row)  # newest copy wins
+    for key, row in merged.items():
+        row["done_by"] = "; ".join(done_by[key]) or None
+        row["done_count"] = len(done_by[key])
+    return list(merged.values())
+
+
 def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes | None]:
     store = app.store
-    rows = [dict(r) for r in store.report_rows(run_ids)]
+    rows = dedupe_rows([dict(r) for r in store.report_rows(run_ids)])
     if not rows:
         return f"📊 <b>{escape(title)}</b>\n\nBu davrda hech narsa yuborilmagan.", None
 
@@ -56,7 +81,12 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
 
     # Short message only — the list of unfinished products is in the Excel file.
     people = Counter()
+    counted: set[tuple] = set()
     for c in store.confirmation_rows(run_ids):
+        task = (c["user_id"], *product_key(c))
+        if task in counted:  # same person marked two copies of the same product
+            continue
+        counted.add(task)
         people[(c["user_name"] or str(c["user_id"]), c["department"])] += 1
     if people:
         lines.append("")

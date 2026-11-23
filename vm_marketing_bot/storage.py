@@ -267,6 +267,39 @@ class Storage:
             self._conn.commit()
             return cur.rowcount
 
+    def merge_duplicate_posts(self, run_ids: list[int], key) -> tuple[list[dict], set[int], list[dict]]:
+        """Same product posted several times: keep the newest post, move marks from the
+        older copies onto it, forget the older copies. Sends that end up with no posts are
+        forgotten too. Returns (removed_posts, kept_post_ids_with_new_marks, removed_headers)."""
+        posts = [dict(p) for p in self.posts_of_runs(run_ids)]
+        newest: dict[tuple, dict] = {}
+        for post in sorted(posts, key=lambda p: p["id"]):
+            newest[key(post)] = post
+        removed = [p for p in posts if newest[key(p)]["id"] != p["id"]]
+        changed: set[int] = set()
+        headers: list[dict] = []
+        with self._lock:
+            for old in removed:
+                kept = newest[key(old)]["id"]
+                cur = self._conn.execute(
+                    "INSERT OR IGNORE INTO confirmations(post_id, user_id, user_name, confirmed_at) "
+                    "SELECT ?, user_id, user_name, confirmed_at FROM confirmations WHERE post_id = ?",
+                    (kept, old["id"]),
+                )
+                if cur.rowcount:
+                    changed.add(kept)
+                self._conn.execute("DELETE FROM confirmations WHERE post_id = ?", (old["id"],))
+                self._conn.execute("DELETE FROM posts WHERE id = ?", (old["id"],))
+            for run_id in run_ids:
+                left = self._conn.execute("SELECT COUNT(*) FROM posts WHERE run_id = ?", (run_id,)).fetchone()[0]
+                if left == 0:
+                    headers += [dict(r) for r in self._conn.execute(
+                        "SELECT * FROM run_messages WHERE run_id = ?", (run_id,))]
+                    self._conn.execute("DELETE FROM run_messages WHERE run_id = ?", (run_id,))
+                    self._conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+            self._conn.commit()
+        return removed, changed, headers
+
     def delete_runs(self, run_ids: list[int]) -> None:
         """Forget these sends completely (posts, marks, run records)."""
         if not run_ids:
@@ -295,7 +328,7 @@ class Storage:
         marks = ",".join("?" for _ in run_ids)
         return self._all(
             f"""
-            SELECT p.department, c.user_id, c.user_name, c.confirmed_at
+            SELECT p.department, p.model, p.name, p.region, c.user_id, c.user_name, c.confirmed_at
             FROM confirmations c JOIN posts p ON p.id = c.post_id
             WHERE p.run_id IN ({marks})
             """,

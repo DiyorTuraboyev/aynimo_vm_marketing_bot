@@ -191,7 +191,7 @@ HELP = (
     "/load — serverdagi faylni ochish\n"
     "/report — shu haftaning hisoboti; /report 4 — oxirgi 4 ta yuborish\n"
     "/template — bo'sh shablon fayl\n"
-    "/clear — shu haftaning ✅ belgilarini yoki test yuborishni tozalash\n"
+    "/clear — belgilarni, takroriy postlarni yoki test yuborishni tozalash\n"
     "/cancel — yuborishni to'xtatish\n"
     "/chatid — chat ID ni bilish"
 )
@@ -447,6 +447,31 @@ async def cb_done(callback: CallbackQuery, app: App) -> None:
     await safe_answer(callback, "✅ Belgilandi, rahmat!" if marked else "↩️ Belgi olib tashlandi")
 
 
+async def refresh_post(bot: Bot, app: App, post_id: int) -> None:
+    """Re-draw a post in the group with its current '✅ Bajardi: ...' list."""
+    post = app.store.get_post(post_id)
+    if post is None or not post["message_id"]:
+        return
+    people = [
+        (row["user_name"], datetime.strptime(row["confirmed_at"], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M"))
+        for row in app.store.confirmations(post_id)
+    ]
+    has_photo = bool(post["has_photo"])
+    text = with_confirmations(post["caption"] or "", people, CAPTION_LIMIT if has_photo else TEXT_LIMIT)
+    try:
+        if has_photo:
+            await tg_retry(lambda: bot.edit_message_caption(
+                chat_id=post["chat_id"], message_id=post["message_id"], caption=text,
+                reply_markup=done_keyboard(post_id)))
+        else:
+            await tg_retry(lambda: bot.edit_message_text(
+                text=text, chat_id=post["chat_id"], message_id=post["message_id"],
+                reply_markup=done_keyboard(post_id)))
+    except TelegramBadRequest as exc:
+        if "not modified" not in str(exc).lower():
+            log.warning("Could not update post %s: %s", post_id, exc)
+
+
 async def safe_answer(callback: CallbackQuery, text: str, alert: bool = False) -> None:
     # Presses delivered after a bot restart are "too old" to answer — the mark is
     # already saved, so just ignore that error.
@@ -466,12 +491,33 @@ async def cmd_report(message: Message, command: CommandObject, bot: Bot, app: Ap
     if not app.settings.is_admin(message.from_user and message.from_user.id):
         return await deny(message)
     args = (command.args or "").strip()
-    if args.isdigit():
-        runs = app.store.last_runs(max(1, min(int(args), 50)))
-        await reports.send_report(bot, app, message.chat.id, [r["id"] for r in runs],
+    count = int(args) if args.isdigit() else 0
+    await _send_report(bot, app, message.chat.id, count)
+    await _offer_group(message.chat, bot, app, count)
+
+
+async def _send_report(bot: Bot, app: App, chat_id, count: int) -> None:
+    """count = 0 -> this week's report; otherwise the last `count` sends."""
+    if count:
+        runs = app.store.last_runs(max(1, min(count, 50)))
+        await reports.send_report(bot, app, chat_id, [r["id"] for r in runs],
                                   f"Hisobot · oxirgi {len(runs)} ta yuborish")
     else:
-        await reports.send_week_report(bot, app, message.chat.id)
+        await reports.send_week_report(bot, app, chat_id)
+
+
+async def _offer_group(chat, bot: Bot, app: App, count: int) -> None:
+    """After a report in private chat: one tap to post the same report in the group."""
+    group = app.settings.weekly_report_chat()
+    if chat.type != "private" or group is None:
+        return
+    await bot.send_message(
+        chat.id,
+        "Shu hisobotni guruhga ham yuborasizmi?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📤 Guruhga yuborish", callback_data=f"rgroup:{count}"),
+        ]]),
+    )
 
 
 @router.callback_query(F.data.startswith("report:"))
@@ -479,7 +525,25 @@ async def cb_report(callback: CallbackQuery, bot: Bot, app: App) -> None:
     if not app.settings.is_admin(callback.from_user.id):
         return await deny(callback)
     await callback.answer()
-    await reports.send_week_report(bot, app, callback.message.chat.id)
+    await _send_report(bot, app, callback.message.chat.id, 0)
+    await _offer_group(callback.message.chat, bot, app, 0)
+
+
+@router.callback_query(F.data.startswith("rgroup:"))
+async def cb_report_to_group(callback: CallbackQuery, bot: Bot, app: App) -> None:
+    if not app.settings.is_admin(callback.from_user.id):
+        return await deny(callback)
+    group = app.settings.weekly_report_chat()
+    if group is None:
+        return await callback.answer("GROUP_CHAT_ID sozlanmagan.", show_alert=True)
+    await callback.answer("Yuborilmoqda...")
+    try:
+        await _send_report(bot, app, group, int(callback.data.split(":", 1)[1] or 0))
+    except Exception as exc:
+        log.exception("Report to group failed")
+        await callback.message.edit_text(f"❌ Guruhga yuborib bo'lmadi: <code>{escape(str(exc))}</code>")
+        return
+    await callback.message.edit_text("✅ Hisobot guruhga yuborildi (📊 Hisobotlar).")
 
 
 
@@ -501,6 +565,7 @@ def clear_keyboard(step: str = "menu", action: str = "") -> InlineKeyboardMarkup
         ]])
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧹 Belgilarni tozalash", callback_data="clr:ask:marks")],
+        [InlineKeyboardButton(text="♻️ Takrorlarni o'chirish", callback_data="clr:ask:dupes")],
         [InlineKeyboardButton(text="🗑 Yuborishni o'chirish (test)", callback_data="clr:ask:sends")],
         [InlineKeyboardButton(text="❌ Bekor", callback_data="clr:close")],
     ])
@@ -508,13 +573,18 @@ def clear_keyboard(step: str = "menu", action: str = "") -> InlineKeyboardMarkup
 
 def clear_menu_text(app: App) -> str:
     run_ids = _week_runs(app)
-    posts = len(app.store.posts_of_runs(run_ids))
+    all_posts = app.store.posts_of_runs(run_ids)
+    posts = len(all_posts)
+    duplicates = posts - len({reports.product_key(p) for p in all_posts})
     marks = app.store.confirmation_count(run_ids)
     return (
         "🧹 <b>Shu haftani tozalash</b>\n\n"
         f"Yuborishlar: {len(run_ids)} ta · postlar: {posts} ta · ✅ belgilar: {marks} ta\n\n"
         "🧹 <b>Belgilarni tozalash</b> — barcha \"✅ Bajarildi\" belgilari o'chadi, "
         "postlar guruhda qoladi, hisobot 0 dan boshlanadi.\n"
+        f"♻️ <b>Takrorlarni o'chirish</b> — bir mahsulot bir necha marta yuborilgan bo'lsa "
+        f"(hozir {duplicates} ta takror), eskilari guruhdan o'chiriladi, eng yangisi qoladi; "
+        "belgilar saqlanadi.\n"
         "🗑 <b>Yuborishni o'chirish</b> — test uchun: shu haftaning postlari guruhdan va "
         "bazadan o'chiriladi."
     )
@@ -542,11 +612,10 @@ async def cb_clear(callback: CallbackQuery, bot: Bot, app: App) -> None:
         return await callback.answer()
     if step == "ask":
         action = parts[2]
-        question = (
-            "❓ Shu haftaning <b>barcha ✅ belgilari</b> o'chirilsinmi?"
-            if action == "marks"
-            else "❓ Shu haftaning <b>barcha postlari guruhdan o'chirilsinmi</b>?\nBuni qaytarib bo'lmaydi."
-        )
+        question = {
+            "marks": "❓ Shu haftaning <b>barcha ✅ belgilari</b> o'chirilsinmi?",
+            "dupes": "❓ Takroriy (eski) postlar guruhdan o'chirilsinmi? Har mahsulotning eng yangi posti qoladi.",
+        }.get(action, "❓ Shu haftaning <b>barcha postlari guruhdan o'chirilsinmi</b>?\nBuni qaytarib bo'lmaydi.")
         await callback.message.edit_text(question, reply_markup=clear_keyboard("confirm", action))
         return await callback.answer()
 
@@ -557,6 +626,22 @@ async def cb_clear(callback: CallbackQuery, bot: Bot, app: App) -> None:
     await callback.answer("Bajarilmoqda...")
     await callback.message.edit_text("⏳ Tozalanmoqda...")
     run_ids = _week_runs(app)
+
+    if action == "dupes":
+        from .cleanup import delete_messages  # local import avoids an import cycle
+
+        removed, changed, headers = app.store.merge_duplicate_posts(run_ids, reports.product_key)
+        targets = [(p["chat_id"], p["message_id"]) for p in removed]
+        targets += [(h["chat_id"], h["message_id"]) for h in headers]
+        deleted, failed = await delete_messages(bot, targets)
+        for post_id in changed:  # marks moved here from an older copy — show them
+            await refresh_post(bot, app, post_id)
+            await asyncio.sleep(0.5)
+        text = f"♻️ {len(removed)} ta takroriy post o'chirildi (guruhdan: {deleted} ta xabar)."
+        if failed:
+            text += f"\n⚠️ {failed} ta xabarni o'chirib bo'lmadi — botga \"Delete messages\" huquqini bering."
+        await callback.message.edit_text(text)
+        return
 
     if action == "marks":
         posts = app.store.posts_of_runs(run_ids, only_confirmed=True)

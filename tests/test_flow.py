@@ -214,6 +214,65 @@ def test_cleanup_warns_when_telegram_refuses(app, template, fake_bot, monkeypatc
     assert warning and "Delete messages" in warning[0][2]
 
 
+def test_report_has_no_duplicates_when_sent_twice(app, template, fake_bot):
+    result, _ = run_send(app, template)
+    first_vm = next(p["id"] for p in _posts(app) if p["department"] == "VM")
+    press(app, first_vm, user_id=10, name="Diyor")  # marks the OLD copy
+    run_send(app, template)  # same file sent again this week
+
+    run_ids = [r["id"] for r in app.store.last_runs(5)]
+    text, data = reports.build_report(app, run_ids, "t")
+    vm_total = result.count("VM")
+    assert f"1/{vm_total} bajarildi" in text  # counted once, mark kept from the old copy
+    assert "Diyor — 1 ta" in text
+
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(BytesIO(data))["Mahsulotlar"]
+    assert ws.max_row - 1 == len(result.products)  # one row per product, no duplicates
+
+
+def test_clear_duplicates_keeps_newest_and_moves_marks(app, template, fake_bot, monkeypatch):
+    monkeypatch.setattr(handlers.asyncio, "sleep", _no_sleep)
+    result, _ = run_send(app, template)
+    first_vm = next(p for p in _posts(app) if p["department"] == "VM")
+    press(app, first_vm["id"], user_id=10, name="Diyor")
+    run_send(app, template)
+
+    fake_bot.sent.clear()
+    text = clear(app, fake_bot, "dupes")
+    assert f"{len(result.products)} ta takroriy post" in text
+    deleted = sum(len(s[2]) for s in fake_bot.sent if s[0] == "delete")
+    assert deleted == len(result.products) + 2  # old posts + old headers
+
+    posts = _posts(app)
+    assert len(posts) == len(result.products)
+    kept = next(p for p in posts if p["model"] == first_vm["model"] and p["department"] == "VM")
+    assert [c["user_name"] for c in app.store.confirmations(kept["id"])] == ["Diyor"]
+    assert any(s[0] == "edit" and "Bajardi" in s[3] for s in fake_bot.sent)  # shown on the kept post
+
+
+def test_report_to_group_button(app, template, fake_bot):
+    run_send(app, template)
+    texts = []
+
+    class Msg:
+        async def edit_text(self, text, reply_markup=None):
+            texts.append(text)
+
+    async def answer(text=None, show_alert=False):
+        pass
+
+    fake_bot.sent.clear()
+    callback = SimpleNamespace(data="rgroup:0", from_user=SimpleNamespace(id=1), message=Msg(), answer=answer)
+    asyncio.run(handlers.cb_report_to_group(callback, fake_bot, app))
+    assert next(s for s in fake_bot.sent if s[0] == "text")[1] == app.settings.group_chat_id
+    assert any(s[0] == "doc" for s in fake_bot.sent)
+    assert "guruhga yuborildi" in texts[-1]
+
+
 def test_flood_control_slows_down(settings, fake_bot, tmp_path):
     from vm_marketing_bot.sender import MAX_INTERVAL
 
