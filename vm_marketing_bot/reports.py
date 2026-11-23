@@ -6,13 +6,12 @@ import io
 import logging
 from collections import Counter
 from datetime import datetime, timedelta
-from html import escape
 from typing import TYPE_CHECKING
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
-from .captions import TEXT_LIMIT
+from .captions import TEXT_LIMIT, escape
 from .config import DEPARTMENT_TITLES, DEPARTMENTS, now
 
 if TYPE_CHECKING:
@@ -158,9 +157,15 @@ async def maybe_send_weekly_report(bot: Bot, app: App) -> None:
 async def weekly_report_loop(bot: Bot, app: App) -> None:
     """Checks every minute; sends once per week on REPORT_DAY after REPORT_TIME.
     If the bot was offline at that moment it sends as soon as it starts (same day)."""
+    from .cleanup import maybe_monday_cleanup  # local import: cleanup imports this module
+
     while True:
         try:
             await maybe_send_weekly_report(bot, app)
         except Exception:
             log.exception("Weekly report check failed")
+        try:
+            await maybe_monday_cleanup(bot, app)
+        except Exception:
+            log.exception("Monday cleanup check failed")
         await asyncio.sleep(CHECK_EVERY_SECONDS)

@@ -178,7 +178,9 @@ HELP = (
     "2️⃣ Bot faylni tekshirib, xulosa ko'rsatadi\n"
     "3️⃣ <b>👁 Namuna</b> bilan dizaynni ko'ring → <b>🚀 Hammasini yuborish</b>\n"
     "4️⃣ VM va Marketing xodimlari o'z postlari ostidagi <b>✅ Bajarildi</b> tugmasini bosadi\n"
-    "5️⃣ <b>Yakshanba</b> kuni bot guruhga haftalik hisobot yuboradi\n\n"
+    "5️⃣ <b>Yakshanba</b> kuni bot guruhga haftalik hisobot yuboradi\n"
+    "6️⃣ <b>Dushanba 09:00</b> — o'tgan hafta hisoboti qayta yuboriladi va o'tgan haftaning "
+    "postlari guruhdan o'chiriladi (hisobotlar o'chirilmaydi)\n\n"
     "<b>Department</b> ustuni: <code>VM</code> yoki <code>MARKETING</code> "
     "(ikkalasi uchun <code>VM/MARKETING</code>).\n"
     "<b>Comment</b> ustuni — postda izoh sifatida chiqadi.\n\n"
@@ -574,22 +576,9 @@ async def cb_clear(callback: CallbackQuery, bot: Bot, app: App) -> None:
         return
 
     # action == "sends": delete this week's posts from the chats, then from the database
-    by_chat: dict[str, list[int]] = {}
-    for post in app.store.posts_of_runs(run_ids):
-        by_chat.setdefault(post["chat_id"], []).append(post["message_id"])
-    for extra in app.store.run_messages(run_ids):
-        by_chat.setdefault(extra["chat_id"], []).append(extra["message_id"])
+    from .cleanup import delete_run_messages  # local import avoids an import cycle
 
-    deleted, failed = 0, 0
-    for chat_id, ids in by_chat.items():
-        for i in range(0, len(ids), 100):
-            chunk = ids[i:i + 100]
-            try:
-                await tg_retry(lambda c=chat_id, m=chunk: bot.delete_messages(chat_id=c, message_ids=m))
-                deleted += len(chunk)
-            except Exception as exc:
-                log.warning("delete_messages failed in %s: %s", chat_id, exc)
-                failed += len(chunk)
+    deleted, failed = await delete_run_messages(bot, app.store, run_ids)
     app.store.delete_runs(run_ids)
 
     text = f"🗑 {len(run_ids)} ta yuborish o'chirildi. Guruhdan o'chirilgan xabarlar: {deleted} ta."

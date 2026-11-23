@@ -71,8 +71,18 @@ class FakeBot:
         self.sent.append(("edit", chat_id, message_id, text))
 
     async def delete_messages(self, chat_id, message_ids):
+        if self.delete_fails:
+            raise RuntimeError("message can't be deleted")
         self.sent.append(("delete", chat_id, list(message_ids)))
         return True
+
+    async def delete_message(self, chat_id, message_id):
+        if self.delete_fails:
+            raise RuntimeError("message can't be deleted")
+        self.sent.append(("delete", chat_id, [message_id]))
+        return True
+
+    delete_fails = False
 
 
 @pytest.fixture

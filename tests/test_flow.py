@@ -152,6 +152,68 @@ def test_clear_sends(app, template, fake_bot):
     assert not app.store.last_runs()
 
 
+def _move_runs_to_last_week(app):
+    start, _ = reports.week_bounds(reports.now())
+    last_week = (start - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    app.store._exec("UPDATE runs SET started_at = ?", (last_week,))
+
+
+def test_monday_recap_and_cleanup(app, template, fake_bot, monkeypatch):
+    from vm_marketing_bot import cleanup
+
+    result_products, _ = run_send(app, template)
+    vm_post = next(p["id"] for p in _posts(app) if p["department"] == "VM")
+    press(app, vm_post, user_id=10, name="Diyor")
+    _move_runs_to_last_week(app)
+
+    start, _ = reports.week_bounds(reports.now())
+    monkeypatch.setattr(cleanup, "now", lambda: start.replace(hour=8, minute=59))  # Monday 08:59
+    fake_bot.sent.clear()
+    asyncio.run(cleanup.maybe_monday_cleanup(fake_bot, app))
+    assert not fake_bot.sent  # too early
+
+    monkeypatch.setattr(cleanup, "now", lambda: start.replace(hour=9, minute=1))  # Monday 09:01
+    asyncio.run(cleanup.maybe_monday_cleanup(fake_bot, app))
+    kinds = [s[0] for s in fake_bot.sent]
+    assert kinds.index("text") < kinds.index("delete")  # report first, then delete
+    recap = next(s for s in fake_bot.sent if s[0] == "text")
+    assert "O'tgan hafta natijasi" in recap[2] and "Diyor" in recap[2]
+    assert any(s[0] == "doc" for s in fake_bot.sent)  # Excel too
+    deleted = sum(len(s[2]) for s in fake_bot.sent if s[0] == "delete")
+    assert deleted == len(result_products.products) + 2
+    assert app.store.confirmations(vm_post)  # history is kept for reports
+
+    fake_bot.sent.clear()  # runs once only
+    asyncio.run(cleanup.maybe_monday_cleanup(fake_bot, app))
+    assert not fake_bot.sent
+
+
+def test_cleanup_leaves_this_week_alone(app, template, fake_bot, monkeypatch):
+    from vm_marketing_bot import cleanup
+
+    run_send(app, template)  # sent this week
+    start, _ = reports.week_bounds(reports.now())
+    monkeypatch.setattr(cleanup, "now", lambda: start.replace(hour=10))
+    fake_bot.sent.clear()
+    asyncio.run(cleanup.maybe_monday_cleanup(fake_bot, app))
+    assert not any(s[0] == "delete" for s in fake_bot.sent)
+
+
+def test_cleanup_warns_when_telegram_refuses(app, template, fake_bot, monkeypatch):
+    from vm_marketing_bot import cleanup
+
+    run_send(app, template)
+    _move_runs_to_last_week(app)
+    start, _ = reports.week_bounds(reports.now())
+    monkeypatch.setattr(cleanup, "now", lambda: start.replace(hour=9, minute=30))
+    monkeypatch.setattr(cleanup.asyncio, "sleep", _no_sleep)
+    fake_bot.delete_fails = True
+    fake_bot.sent.clear()
+    asyncio.run(cleanup.maybe_monday_cleanup(fake_bot, app))
+    warning = [s for s in fake_bot.sent if s[0] == "text" and "o'chirib bo'lmadi" in s[2]]
+    assert warning and "Delete messages" in warning[0][2]
+
+
 async def _no_sleep(*_):
     return None
 

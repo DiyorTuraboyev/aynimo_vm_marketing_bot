@@ -109,6 +109,10 @@ class Settings:
     report_enabled: bool
     report_weekday: int  # 0 = Monday ... 6 = Sunday
     report_time: time
+    # Monday morning: re-send last week's report, then delete last week's posts from the group
+    cleanup_enabled: bool = True
+    cleanup_weekday: int = 0
+    cleanup_time: time = time(9, 0)
 
     def target_chat(self, department: str, fallback: int | str) -> int | str:
         chat = self.vm_chat_id if department == "VM" else self.marketing_chat_id
@@ -183,4 +187,7 @@ def load_settings() -> Settings:
         report_enabled=flag("WEEKLY_REPORT"),
         report_weekday=_weekday(_env("REPORT_DAY", "sunday"), 6),
         report_time=_time(_env("REPORT_TIME", "18:00"), time(18, 0)),
+        cleanup_enabled=flag("WEEKLY_CLEANUP"),
+        cleanup_weekday=_weekday(_env("CLEANUP_DAY", "monday"), 0),
+        cleanup_time=_time(_env("CLEANUP_TIME", "09:00"), time(9, 0)),
     )

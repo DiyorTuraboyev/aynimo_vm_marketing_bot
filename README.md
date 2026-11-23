@@ -9,7 +9,12 @@ what is still pending, who did what (+ Excel file).
 Monday:  admin ──Excel──▶ bot ──preview──▶ "🚀 Hammasini yuborish" ──▶ group (VM + Marketing posts)
 Week:    VM team ✅ VM posts · Marketing team ✅ Marketing posts
 Sunday:  bot ──▶ group: "📊 Haftalik hisobot" + Excel
+Monday 09:00: bot ──▶ group: "O'tgan hafta natijasi" + Excel, then deletes last week's product posts
 ```
+
+The Monday cleanup needs the bot to be a group **admin with "Delete messages"** permission (Telegram only lets
+bots delete messages older than 48 hours with that right). Reports are never deleted; history stays in the
+database. Settings: `WEEKLY_CLEANUP`, `CLEANUP_DAY`, `CLEANUP_TIME`.
 
 ## Project layout
 

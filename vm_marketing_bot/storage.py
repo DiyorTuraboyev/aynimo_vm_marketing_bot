@@ -70,8 +70,9 @@ class Storage:
         with self._lock:
             self._conn.executescript(SCHEMA)
             columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(runs)")}
-            if "report_sent_at" not in columns:  # migration for older databases
-                self._conn.execute("ALTER TABLE runs ADD COLUMN report_sent_at TEXT")
+            for column in ("report_sent_at", "cleaned_at", "recap_sent_at"):  # migrations
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
             post_columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(posts)")}
             if "region" not in post_columns:
                 self._conn.execute("ALTER TABLE posts ADD COLUMN region TEXT")
@@ -173,6 +174,25 @@ class Storage:
             "SELECT * FROM runs WHERE started_at >= ? AND started_at < ? AND sent > 0 ORDER BY id",
             (start.strftime(FMT), end.strftime(FMT)),
         )
+
+    def runs_to_clean(self, before: datetime) -> list[sqlite3.Row]:
+        """Sends from before `before` whose group posts were not deleted yet."""
+        return self._all(
+            "SELECT * FROM runs WHERE started_at < ? AND sent > 0 AND cleaned_at IS NULL ORDER BY id",
+            (before.strftime(FMT),),
+        )
+
+    def mark_cleaned(self, run_ids: list[int]) -> None:
+        self._mark("cleaned_at", run_ids)
+
+    def mark_recap_sent(self, run_ids: list[int]) -> None:
+        self._mark("recap_sent_at", run_ids)
+
+    def _mark(self, column: str, run_ids: list[int]) -> None:
+        if not run_ids:
+            return
+        marks = ",".join("?" for _ in run_ids)
+        self._exec(f"UPDATE runs SET {column} = ? WHERE id IN ({marks})", (_now(), *run_ids))
 
     def mark_report_sent(self, run_ids: list[int]) -> None:
         if not run_ids:
