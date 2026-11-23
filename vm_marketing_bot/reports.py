@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
 from .captions import TEXT_LIMIT, escape
 from .config import DEPARTMENT_TITLES, DEPARTMENTS, now
@@ -158,19 +158,38 @@ def _excel(rows: list[dict], by_dept: dict[str, list[dict]]) -> bytes:
     return buf.getvalue()
 
 
+def is_private(chat_id) -> bool:
+    return isinstance(chat_id, int) and chat_id > 0
+
+
+async def bot_chat_keyboard(bot: Bot) -> InlineKeyboardMarkup | None:
+    """A link button that opens the private chat with the bot (t.me/<bot>)."""
+    try:
+        me = await bot.me()
+    except Exception as exc:
+        log.debug("Could not get bot username: %s", exc)
+        return None
+    if not getattr(me, "username", None):
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🤖 Bot bilan chat", url=f"https://t.me/{me.username}"),
+    ]])
+
+
 async def send_report(bot: Bot, app: App, chat_id, run_ids: list[int], title: str) -> None:
     from . import topics
 
     text, data = await asyncio.to_thread(build_report, app, run_ids, title)
+    markup = None if is_private(chat_id) else await bot_chat_keyboard(bot)
     thread = await topics.thread_for(bot, app.store, chat_id, "REPORT", app.settings.use_topics)
     try:
-        await bot.send_message(chat_id, text, message_thread_id=thread)
+        await bot.send_message(chat_id, text, message_thread_id=thread, reply_markup=markup)
     except Exception as exc:
         if thread is None or not topics.is_thread_error(exc):
             raise
         topics.forget(app.store, chat_id, "REPORT")  # topic deleted — recreate
         thread = await topics.thread_for(bot, app.store, chat_id, "REPORT", app.settings.use_topics)
-        await bot.send_message(chat_id, text, message_thread_id=thread)
+        await bot.send_message(chat_id, text, message_thread_id=thread, reply_markup=markup)
     if data:
         name = f"hisobot_{now():%Y%m%d_%H%M}.xlsx"
         await bot.send_document(chat_id, BufferedInputFile(data, filename=name), message_thread_id=thread)

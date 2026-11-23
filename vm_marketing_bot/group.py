@@ -64,5 +64,22 @@ async def chatid_in_group(message: Message, bot: Bot) -> None:
 
 @router.message(F.text.startswith("/"))
 async def remove_command(message: Message, bot: Bot) -> None:
-    """Commands are not used in the group — remove them so only products stay."""
+    """Commands are not used in the group — remove them so only products stay.
+    The sender gets a short-lived button that opens the private chat with the bot."""
+    from .reports import bot_chat_keyboard
+
     await _delete(bot, message.chat.id, message.message_id)
+    markup = await bot_chat_keyboard(bot)
+    if markup is None:
+        return
+    try:
+        reply = await bot.send_message(
+            message.chat.id,
+            f"Buyruqlar bot bilan shaxsiy chatda ishlaydi 👇\n<i>Bu xabar {CHATID_REPLY_SECONDS} soniyada o'chadi.</i>",
+            reply_markup=markup,
+            message_thread_id=getattr(message, "message_thread_id", None),
+        )
+    except Exception as exc:
+        log.debug("Could not send bot link in %s: %s", message.chat.id, exc)
+        return
+    asyncio.create_task(_delete_later(bot, message.chat.id, [reply.message_id], CHATID_REPLY_SECONDS))

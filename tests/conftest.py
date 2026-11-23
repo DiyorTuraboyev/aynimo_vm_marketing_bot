@@ -63,6 +63,9 @@ class FakeBot:
 
             raise TelegramBadRequest(SendMessage(chat_id=0, text="x"), "Bad Request: message thread not found")
 
+    async def me(self):
+        return SimpleNamespace(id=999, username="aynimo_test_bot")
+
     async def get_chat(self, chat_id):
         return SimpleNamespace(id=chat_id, is_forum=self.forum and chat_id != 555, title="Guruh", full_name="Guruh")
 

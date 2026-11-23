@@ -93,6 +93,21 @@ def test_group_cleaning_deletes_commands_and_notices(fake_bot):
     asyncio.run(group.remove_service_message(message, fake_bot))
     asyncio.run(group.remove_command(message, fake_bot))
     assert [s for s in fake_bot.sent if s[0] == "delete"] == [("delete", -100, [77]), ("delete", -100, [77])]
+    # after deleting a command the bot shows a link to its private chat
+    link = next(s for s in fake_bot.sent if s[0] == "text")
+    assert link[3].inline_keyboard[0][0].url == "https://t.me/aynimo_test_bot"
+
+
+def test_group_report_has_bot_chat_link(app, template, fake_bot):
+    from tests.test_flow import run_send
+
+    run_send(app, template)
+    fake_bot.sent.clear()
+    asyncio.run(reports.send_week_report(fake_bot, app, -1001))
+    asyncio.run(reports.send_week_report(fake_bot, app, 1))  # private chat: no link needed
+    texts = [s for s in fake_bot.sent if s[0] == "text"]
+    assert texts[0][3].inline_keyboard[0][0].url == "https://t.me/aynimo_test_bot"
+    assert texts[1][3] is None
 
 
 def test_excel_upload_in_group_is_ignored(app, fake_bot):
