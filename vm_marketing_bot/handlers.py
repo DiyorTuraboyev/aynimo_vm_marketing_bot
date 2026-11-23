@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
@@ -29,7 +28,6 @@ from .storage import Storage
 log = logging.getLogger(__name__)
 router = Router(name="vm_marketing")
 
-PRESS_DEBOUNCE_SECONDS = 20
 MAX_UPLOAD_BYTES = 10_000_000  # a weekly Excel is ~15 KB; 10 MB means pictures were pasted inside
 
 
@@ -41,7 +39,6 @@ class App:
     loaded: dict[int, LoadResult] = field(default_factory=dict)
     job: SendJob | None = None
     task: asyncio.Task | None = None
-    last_press: dict[tuple[int, int], float] = field(default_factory=dict)
 
     @property
     def busy(self) -> bool:
@@ -402,10 +399,13 @@ async def cb_cancel(callback: CallbackQuery, app: App) -> None:
 # "✅ Bajarildi" button under each post
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data.startswith("done:"))
+@router.callback_query(F.data.startswith("done:") | F.data.startswith("undone:"))
 async def cb_done(callback: CallbackQuery, app: App) -> None:
+    """'✅ Bajarildi' marks the post done; '❌ Bajarilmadi' takes the mark back.
+    Two separate actions (not a toggle), so repeated or queued taps can't flip it back and forth."""
+    action, _, raw_id = callback.data.partition(":")
     try:
-        post_id = int(callback.data.split(":", 1)[1])
+        post_id = int(raw_id)
     except ValueError:
         await callback.answer()
         return
@@ -420,31 +420,35 @@ async def cb_done(callback: CallbackQuery, app: App) -> None:
         icon, title = DEPARTMENT_TITLES.get(department, ("", department))
         await safe_answer(callback, f"⛔ Bu {title} bo'limining vazifasi. Faqat {title} xodimlari belgilaydi.", alert=True)
         return
-    # Repeated presses that arrive together (e.g. queued while the bot was offline,
-    # or nervous double-taps) must not switch the mark on/off/on.
-    key = (post_id, user.id)
-    now = time.monotonic()
-    last = app.last_press.get(key)
-    app.last_press[key] = now
-    if last is not None and now - last < PRESS_DEBOUNCE_SECONDS:
-        await safe_answer(callback, "✅ Qabul qilindi")
-        return
-    marked = app.store.toggle_confirmation(post_id, user.id, user.full_name)
-    people = [
-        (row["user_name"], datetime.strptime(row["confirmed_at"], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M"))
-        for row in app.store.confirmations(post_id)
-    ]
-    has_photo = bool(post["has_photo"])
-    text = with_confirmations(post["caption"] or "", people, CAPTION_LIMIT if has_photo else TEXT_LIMIT)
+    if action == "done":
+        app.store.add_confirmation(post_id, user.id, user.full_name)
+        answer = "✅ Bajarildi deb belgilandi, rahmat!"
+    else:
+        app.store.clear_post_confirmations(post_id)
+        log.info("Post %s marked NOT done by %s (%s)", post_id, user.full_name, user.id)
+        answer = "❌ Bajarilmadi — belgi olib tashlandi"
+
+    text, keyboard = _post_view(app, post)
     try:
-        if has_photo:
-            await callback.message.edit_caption(caption=text, reply_markup=done_keyboard(post_id))
+        if post["has_photo"]:
+            await callback.message.edit_caption(caption=text, reply_markup=keyboard)
         else:
-            await callback.message.edit_text(text, reply_markup=done_keyboard(post_id))
+            await callback.message.edit_text(text, reply_markup=keyboard)
     except TelegramBadRequest as exc:
         if "not modified" not in str(exc).lower():
             log.warning("Could not update post %s: %s", post_id, exc)
-    await safe_answer(callback, "✅ Belgilandi, rahmat!" if marked else "↩️ Belgi olib tashlandi")
+    await safe_answer(callback, answer)
+
+
+def _post_view(app: App, post) -> tuple[str, InlineKeyboardMarkup]:
+    """Caption with '✅ Bajardi: ...' and the matching button for the post's current state."""
+    people = [
+        (row["user_name"], datetime.strptime(row["confirmed_at"], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M"))
+        for row in app.store.confirmations(post["id"])
+    ]
+    limit = CAPTION_LIMIT if post["has_photo"] else TEXT_LIMIT
+    text = with_confirmations(post["caption"] or "", people, limit)
+    return text, done_keyboard(post["id"], done=bool(people))
 
 
 async def refresh_post(bot: Bot, app: App, post_id: int) -> None:
@@ -452,21 +456,14 @@ async def refresh_post(bot: Bot, app: App, post_id: int) -> None:
     post = app.store.get_post(post_id)
     if post is None or not post["message_id"]:
         return
-    people = [
-        (row["user_name"], datetime.strptime(row["confirmed_at"], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M"))
-        for row in app.store.confirmations(post_id)
-    ]
-    has_photo = bool(post["has_photo"])
-    text = with_confirmations(post["caption"] or "", people, CAPTION_LIMIT if has_photo else TEXT_LIMIT)
+    text, keyboard = _post_view(app, post)
     try:
-        if has_photo:
+        if post["has_photo"]:
             await tg_retry(lambda: bot.edit_message_caption(
-                chat_id=post["chat_id"], message_id=post["message_id"], caption=text,
-                reply_markup=done_keyboard(post_id)))
+                chat_id=post["chat_id"], message_id=post["message_id"], caption=text, reply_markup=keyboard))
         else:
             await tg_retry(lambda: bot.edit_message_text(
-                text=text, chat_id=post["chat_id"], message_id=post["message_id"],
-                reply_markup=done_keyboard(post_id)))
+                text=text, chat_id=post["chat_id"], message_id=post["message_id"], reply_markup=keyboard))
     except TelegramBadRequest as exc:
         if "not modified" not in str(exc).lower():
             log.warning("Could not update post %s: %s", post_id, exc)

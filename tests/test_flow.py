@@ -34,21 +34,26 @@ def run_send(app, template):
     return result, job
 
 
-def press(app, post_id, user_id, name="User"):
+BUTTONS: list[str] = []  # label of the button after the last press
+
+
+def press(app, post_id, user_id, name="User", action="done"):
     answers, edits = [], []
 
     class Msg:
         async def edit_caption(self, caption, reply_markup):
             edits.append(caption)
+            BUTTONS.append(reply_markup.inline_keyboard[0][0].text)
 
         async def edit_text(self, text, reply_markup):
             edits.append(text)
+            BUTTONS.append(reply_markup.inline_keyboard[0][0].text)
 
     async def answer(text=None, show_alert=False):
         answers.append((text, show_alert))
 
     callback = SimpleNamespace(
-        data=f"done:{post_id}", from_user=SimpleNamespace(id=user_id, full_name=name),
+        data=f"{action}:{post_id}", from_user=SimpleNamespace(id=user_id, full_name=name),
         message=Msg(), answer=answer,
     )
     asyncio.run(handlers.cb_done(callback, app))
@@ -73,8 +78,26 @@ def test_department_teams_and_debounce(app, template):
 
     answers, edits = press(app, vm_post, user_id=10, name="VM Vali")
     assert "Bajardi" in edits[-1]
-    answers, _ = press(app, vm_post, user_id=10, name="VM Vali")  # quick repeat ignored
+    answers, _ = press(app, vm_post, user_id=10, name="VM Vali")  # repeated tap: still marked once
     assert len(app.store.confirmations(vm_post)) == 1
+
+
+def test_button_switches_between_done_and_not_done(app, template):
+    run_send(app, template)
+    post = next(p["id"] for p in _posts(app) if p["department"] == "VM")
+
+    _, edits = press(app, post, user_id=10, name="Diyor")
+    assert BUTTONS[-1] == "❌ Bajarilmadi" and "Bajardi:</b> Diyor" in edits[-1]
+
+    _, edits = press(app, post, user_id=10, name="Diyor", action="undone")
+    assert BUTTONS[-1] == "✅ Bajarildi" and "Bajardi" not in edits[-1]
+    assert not app.store.confirmations(post)
+
+    _, _ = press(app, post, user_id=10, action="undone")  # queued extra tap: stays "not done"
+    assert BUTTONS[-1] == "✅ Bajarildi"
+
+    answers, _ = press(app, post, user_id=20, action="undone")  # marketing user can't undo VM
+    assert answers[0][1] is True
 
 
 def test_weekly_report(app, template, fake_bot, monkeypatch):

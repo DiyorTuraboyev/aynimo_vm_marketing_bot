@@ -176,6 +176,18 @@ class Storage:
             self._conn.commit()
             return not exists
 
+    def add_confirmation(self, post_id: int, user_id: int, user_name: str) -> bool:
+        """Mark as done. Returns False if this person had already marked it."""
+        cur = self._exec(
+            "INSERT OR IGNORE INTO confirmations(post_id, user_id, user_name, confirmed_at) VALUES (?, ?, ?, ?)",
+            (post_id, user_id, user_name, _now()),
+        )
+        return cur.rowcount > 0
+
+    def clear_post_confirmations(self, post_id: int) -> int:
+        """'❌ Bajarilmadi': the post is not done any more. Returns removed marks."""
+        return self._exec("DELETE FROM confirmations WHERE post_id = ?", (post_id,)).rowcount
+
     def confirmations(self, post_id: int) -> list[sqlite3.Row]:
         return self._all(
             "SELECT user_name, confirmed_at FROM confirmations WHERE post_id = ? ORDER BY confirmed_at",

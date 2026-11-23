@@ -85,10 +85,14 @@ async def tg_retry(
     return await call()
 
 
-def done_keyboard(post_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="✅ Bajarildi", callback_data=f"done:{post_id}")]]
+def done_keyboard(post_id: int, done: bool = False) -> InlineKeyboardMarkup:
+    """Not done yet -> "✅ Bajarildi". Already done -> "❌ Bajarilmadi" (undo a mistaken mark)."""
+    button = (
+        InlineKeyboardButton(text="❌ Bajarilmadi", callback_data=f"undone:{post_id}")
+        if done
+        else InlineKeyboardButton(text="✅ Bajarildi", callback_data=f"done:{post_id}")
     )
+    return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
