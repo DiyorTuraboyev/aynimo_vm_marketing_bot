@@ -296,6 +296,28 @@ def test_report_to_group_button(app, template, fake_bot):
     assert "guruhga yuborildi" in texts[-1]
 
 
+def test_report_to_me_button(app, template, fake_bot):
+    run_send(app, template)
+    texts = []
+
+    class Msg:
+        async def edit_text(self, text, reply_markup=None):
+            texts.append(text)
+
+    async def answer(text=None, show_alert=False):
+        pass
+
+    fake_bot.sent.clear()
+    callback = SimpleNamespace(data="rme:0", from_user=SimpleNamespace(id=1), message=Msg(), answer=answer)
+    asyncio.run(handlers.cb_report_to_me(callback, fake_bot, app))
+    sent_to = {s[1] for s in fake_bot.sent if s[0] in ("text", "doc")}
+    assert sent_to == {1}  # only the admin's private chat, nothing in the group
+    assert "sizga yuborildi" in texts[-1]
+
+    buttons = [b.callback_data for b in handlers.report_keyboard(app, 0).inline_keyboard[0]]
+    assert buttons == ["rme:0", "rgroup:0"]
+
+
 def test_report_counts_only_latest_file(app, template, fake_bot, tmp_path):
     """Test sends of an older/different file this week must not inflate the report."""
     from openpyxl import load_workbook

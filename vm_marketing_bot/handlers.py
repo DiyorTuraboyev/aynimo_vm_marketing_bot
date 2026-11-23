@@ -489,8 +489,7 @@ async def cmd_report(message: Message, command: CommandObject, bot: Bot, app: Ap
         return await deny(message)
     args = (command.args or "").strip()
     count = int(args) if args.isdigit() else 0
-    await _send_report(bot, app, message.chat.id, count)
-    await _offer_group(message.chat, bot, app, count)
+    await _ask_where(message.chat, bot, app, count)
 
 
 async def _send_report(bot: Bot, app: App, chat_id, count: int) -> None:
@@ -503,18 +502,24 @@ async def _send_report(bot: Bot, app: App, chat_id, count: int) -> None:
         await reports.send_week_report(bot, app, chat_id)
 
 
-async def _offer_group(chat, bot: Bot, app: App, count: int) -> None:
-    """After a report in private chat: one tap to post the same report in the group."""
-    group = app.settings.weekly_report_chat()
-    if chat.type != "private" or group is None:
-        return
-    await bot.send_message(
-        chat.id,
-        "Shu hisobotni guruhga ham yuborasizmi?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📤 Guruhga yuborish", callback_data=f"rgroup:{count}"),
-        ]]),
-    )
+REPORT_QUESTION = "📊 Hisobotni qayerga yuboray?"
+
+
+def report_keyboard(app: App, count: int) -> InlineKeyboardMarkup:
+    """Two choices: straight to this admin's private chat, or to the group."""
+    row = [InlineKeyboardButton(text="📥 Menga (shaxsiy chat)", callback_data=f"rme:{count}")]
+    if app.settings.weekly_report_chat() is not None:
+        row.append(InlineKeyboardButton(text="📤 Guruhga", callback_data=f"rgroup:{count}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+async def _ask_where(chat, bot: Bot, app: App, count: int) -> None:
+    await bot.send_message(chat.id, REPORT_QUESTION, reply_markup=report_keyboard(app, count))
+
+
+def _report_count(callback: CallbackQuery) -> int:
+    value = callback.data.split(":", 1)[1]
+    return int(value) if value.isdigit() else 0
 
 
 @router.callback_query(F.data.startswith("report:"))
@@ -522,8 +527,25 @@ async def cb_report(callback: CallbackQuery, bot: Bot, app: App) -> None:
     if not app.settings.is_admin(callback.from_user.id):
         return await deny(callback)
     await callback.answer()
-    await _send_report(bot, app, callback.message.chat.id, 0)
-    await _offer_group(callback.message.chat, bot, app, 0)
+    await _ask_where(callback.message.chat, bot, app, 0)
+
+
+@router.callback_query(F.data.startswith("rme:"))
+async def cb_report_to_me(callback: CallbackQuery, bot: Bot, app: App) -> None:
+    """Report goes directly to the admin who pressed the button — never to the group."""
+    if not app.settings.is_admin(callback.from_user.id):
+        return await deny(callback)
+    await callback.answer("Yuborilmoqda...")
+    count = _report_count(callback)
+    try:
+        await _send_report(bot, app, callback.from_user.id, count)
+    except Exception as exc:
+        log.exception("Report to private chat failed")
+        await callback.message.edit_text(f"❌ Yuborib bo'lmadi: <code>{escape(str(exc))}</code>",
+                                         reply_markup=report_keyboard(app, count))
+        return
+    await callback.message.edit_text("✅ Hisobot sizga yuborildi.\n" + REPORT_QUESTION,
+                                     reply_markup=report_keyboard(app, count))
 
 
 @router.callback_query(F.data.startswith("rgroup:"))
@@ -534,13 +556,16 @@ async def cb_report_to_group(callback: CallbackQuery, bot: Bot, app: App) -> Non
     if group is None:
         return await callback.answer("GROUP_CHAT_ID sozlanmagan.", show_alert=True)
     await callback.answer("Yuborilmoqda...")
+    count = _report_count(callback)
     try:
-        await _send_report(bot, app, group, int(callback.data.split(":", 1)[1] or 0))
+        await _send_report(bot, app, group, count)
     except Exception as exc:
         log.exception("Report to group failed")
-        await callback.message.edit_text(f"❌ Guruhga yuborib bo'lmadi: <code>{escape(str(exc))}</code>")
+        await callback.message.edit_text(f"❌ Guruhga yuborib bo'lmadi: <code>{escape(str(exc))}</code>",
+                                         reply_markup=report_keyboard(app, count))
         return
-    await callback.message.edit_text("✅ Hisobot guruhga yuborildi (📊 Hisobotlar).")
+    await callback.message.edit_text("✅ Hisobot guruhga yuborildi (📊 Hisobotlar).\n" + REPORT_QUESTION,
+                                     reply_markup=report_keyboard(app, count))
 
 
 
