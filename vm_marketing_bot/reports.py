@@ -55,22 +55,7 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
         lines.append(f"{icon} <b>{name}</b>: {done}/{len(part)} bajarildi ({_percent(done, len(part))})")
         lines.append(_bar(done, len(part)))
 
-    for dept, part in by_dept.items():
-        pending = [r for r in part if not r["done_count"]]
-        if not pending:
-            continue
-        _, name = DEPARTMENT_TITLES[dept]
-        lines.append("")
-        lines.append(f"⏳ <b>{name} — bajarilmagan ({len(pending)}):</b>")
-        for r in pending[:15]:
-            label = r["model"] or ""
-            if r["name"] and r["name"] != r["model"]:
-                label = f"{label} — {r['name']}" if label else r["name"]
-            region = f" · 📍{r['region']}" if r.get("region") else ""
-            lines.append(f"• {escape(str(label))[:80]}{escape(region)[:40]}")
-        if len(pending) > 15:
-            lines.append(f"… yana {len(pending) - 15} ta (Excel faylda)")
-
+    # Short message only — the list of unfinished products is in the Excel file.
     people = Counter()
     for c in store.confirmation_rows(run_ids):
         people[(c["user_name"] or str(c["user_id"]), c["department"])] += 1
