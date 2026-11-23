@@ -5,7 +5,7 @@ import re
 from datetime import date
 from html import escape as _html_escape
 
-from .config import DEPARTMENT_TITLES, REGION_MIN_STOCK, STORE_REGIONS, now
+from .config import DEPARTMENT_TITLES, REGION_MIN_STOCK, now
 from .excel import LoadResult, Product, parse_number
 
 CAPTION_LIMIT = 1024
@@ -62,19 +62,6 @@ def store_table(product: Product) -> str:
     return "<pre>" + escape("\n".join(lines)) + "</pre>"
 
 
-def _region_summary(product: Product) -> str:
-    known = {c: v for c, v in product.stores.items() if v is not None}
-    if not known or any(code not in STORE_REGIONS for code in known):
-        return ""
-    totals: dict[str, int] = {}
-    for code, value in known.items():
-        region = STORE_REGIONS[code]
-        totals[region] = totals.get(region, 0) + value
-    best = max(totals, key=totals.get)
-    parts = " · ".join(f"{escape(r)}: {v}" for r, v in totals.items())
-    return f"🔥 Reklama regioni: <b>{escape(best.upper())}</b>\n🗺 {parts}"
-
-
 def _top_stores(product: Product, limit: int = 3) -> str:
     ranked = sorted(
         ((c, v) for c, v in product.target_stores().items() if v is not None and v > 0),
@@ -106,11 +93,13 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
     if region.suggested:
         if region.totals:
             places = " · ".join(f"{escape(r)} ({q})" for r, q in region.totals)
-            head.append(f"📍 <b>Hudud (bot tavsiyasi):</b> {places}")
+            head.append(f"📍 <b>Hudud (bot tavsiyasi): {places}</b>")
         else:
-            head.append(f"📍 <b>Hudud (bot tavsiyasi):</b> yo'q — hech bir hududda qoldiq {REGION_MIN_STOCK} tadan ko'p emas")
+            head.append(
+                f"📍 <b>Hudud (bot tavsiyasi): yo'q — hech bir hududda qoldiq {REGION_MIN_STOCK} tadan ko'p emas</b>"
+            )
     elif region.text:
-        head.append(f"📍 <b>Hudud:</b> {escape(region.text)}")
+        head.append(f"📍 <b>Hudud: {escape(region.text)}</b>")
     if product.note:
         head.append(f"💬 <b>Izoh:</b> <i>{escape(product.note)}</i>")
 
@@ -135,10 +124,8 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
 
     extra = _stock_alerts(product)
     if product.department == "MARKETING":
-        # The automatic "advertise here" hint only when the Excel does not name regions.
-        region = _region_summary(product) if product.region.is_all else ""
         top = _top_stores(product)
-        extra = ([region] if region else []) + ([top] if top else []) + extra
+        extra = ([top] if top else []) + extra
 
     tags = " ".join(
         t for t in (

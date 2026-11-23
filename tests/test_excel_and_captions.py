@@ -80,6 +80,8 @@ def test_captions_are_valid_and_fit(template):
         assert len(confirmed) <= 1024
         assert_valid_telegram_html(confirmed)
 
+        assert "Reklama regioni" not in caption  # removed on request: only "Hudud" is shown
+
     for dept in ("VM", "MARKETING"):
         assert_valid_telegram_html(department_header(dept, result.for_department(dept), week))
     assert_valid_telegram_html(preview_text(result, week, {"VM": "Guruh", "MARKETING": "Guruh"}))
@@ -138,7 +140,7 @@ def test_region_filters_store_table(tmp_path):
     a1, a2 = load_products(path).products
     assert set(a1.target_stores()) == {"S01", "S02"}
     caption = build_caption(a1, "w")
-    assert "📍 <b>Hudud:</b> Buxoro, Qarshi" in caption
+    assert "📍 <b>Hudud: Buxoro, Qarshi</b>" in caption
     assert "#Buxoro" in caption and "#Qarshi" in caption
     assert "S07" not in caption
     assert "Reklama regioni" not in caption  # regions given by the Excel, no auto hint
@@ -159,7 +161,7 @@ def test_empty_region_is_suggested_from_stock(tmp_path):
     a1, a2 = load_products(path).products
     assert a1.region.suggested and a1.region.regions == ("Toshkent", "Buxoro")  # >5, highest first
     caption = build_caption(a1, "w")
-    assert "Hudud (bot tavsiyasi):</b> Toshkent (15) · Buxoro (7)" in caption
+    assert "<b>Hudud (bot tavsiyasi): Toshkent (15) · Buxoro (7)</b>" in caption
     assert "S02" not in caption  # Qarshi (4) not suggested -> its stores hidden
     assert "#Toshkent" in caption
     assert not result_warnings_for(path)
