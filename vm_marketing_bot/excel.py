@@ -43,10 +43,32 @@ class RegionInfo:
     text: str  # as written in Excel, shown on the post
     regions: tuple[str, ...]  # recognised region names (canonical spelling); empty = all
     in_stock_only: bool  # "ostatka bor do'konlarda" -> hide stores without stock
+    suggested: bool = False  # Region was empty -> chosen by the bot from stock
+    totals: tuple[tuple[str, int], ...] = ()  # suggested regions with their stock
 
     @property
     def is_all(self) -> bool:
-        return not self.regions
+        return not self.regions and not self.suggested
+
+
+def suggest_regions(stores: dict[str, int | None]) -> RegionInfo:
+    """Empty Region cell: every region whose total stock is more than REGION_MIN_STOCK,
+    highest first."""
+    from .config import REGION_MIN_STOCK, STORE_REGIONS
+
+    totals: dict[str, int] = {}
+    for code, qty in stores.items():
+        region = STORE_REGIONS.get(code)
+        if region and qty is not None:
+            totals[region] = totals.get(region, 0) + qty
+    chosen = sorted(
+        ((r, q) for r, q in totals.items() if q > REGION_MIN_STOCK), key=lambda item: item[1], reverse=True
+    )
+    text = ", ".join(r for r, _ in chosen)
+    return RegionInfo(
+        text=text, regions=tuple(r for r, _ in chosen), in_stock_only=False,
+        suggested=True, totals=tuple(chosen),
+    )
 
 
 def parse_region(text: str) -> RegionInfo:
@@ -312,8 +334,9 @@ def load_products(path: str | Path) -> LoadResult:
         store_values = {code: parse_int(values[col]) for code, col in stores.items()}
         warehouse_values = {code: parse_int(values[col]) for code, col in warehouses.items()}
         photo = clean_text(cell(values, "photo")).replace("\\", "/")
-        region = parse_region(clean_text(cell(values, "region")))
-        if region.text and not region.regions:
+        region_cell = clean_text(cell(values, "region"))
+        region = parse_region(region_cell) if region_cell else suggest_regions(store_values)
+        if region.text and not region.regions and not region.suggested:
             words = {w.strip().lower() for w in re.split(r"[,;/+]", region.text)}
             if not words & ALL_REGION_WORDS and not region.in_stock_only:
                 result.warnings.append(

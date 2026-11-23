@@ -30,6 +30,17 @@ STORE_REGIONS: dict[str, str] = {
 
 DEPARTMENTS = ("VM", "MARKETING")
 
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int((os.getenv(name) or "").strip() or default)
+    except ValueError:
+        return default
+
+
+# Empty "Region" cell -> the bot suggests every region whose stock is MORE than this.
+REGION_MIN_STOCK = _int_env("REGION_MIN_STOCK", 5)
+
 DEPARTMENT_TITLES = {
     "VM": ("🎨", "VM"),
     "MARKETING": ("📢", "MARKETING"),

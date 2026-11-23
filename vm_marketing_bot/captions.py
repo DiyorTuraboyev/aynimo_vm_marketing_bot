@@ -5,7 +5,7 @@ import re
 from datetime import date
 from html import escape as _html_escape
 
-from .config import DEPARTMENT_TITLES, STORE_REGIONS, now
+from .config import DEPARTMENT_TITLES, REGION_MIN_STOCK, STORE_REGIONS, now
 from .excel import LoadResult, Product, parse_number
 
 CAPTION_LIMIT = 1024
@@ -102,8 +102,15 @@ def build_caption(product: Product, week: str, limit: int = CAPTION_LIMIT) -> st
     icon, title = DEPARTMENT_TITLES[product.department]
 
     head = [f"{icon} <b>{title}</b> · {escape(week)}"]
-    if product.region.text:
-        head.append(f"📍 <b>Hudud:</b> {escape(product.region.text)}")
+    region = product.region
+    if region.suggested:
+        if region.totals:
+            places = " · ".join(f"{escape(r)} ({q})" for r, q in region.totals)
+            head.append(f"📍 <b>Hudud (bot tavsiyasi):</b> {places}")
+        else:
+            head.append(f"📍 <b>Hudud (bot tavsiyasi):</b> yo'q — hech bir hududda qoldiq {REGION_MIN_STOCK} tadan ko'p emas")
+    elif region.text:
+        head.append(f"📍 <b>Hudud:</b> {escape(region.text)}")
     if product.note:
         head.append(f"💬 <b>Izoh:</b> <i>{escape(product.note)}</i>")
 

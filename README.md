@@ -90,7 +90,7 @@ git push -u origin main
 | Column | Notes |
 |---|---|
 | `Department` | **Required.** `VM` or `MARKETING` (`VM/MARKETING` → the product is posted for both). |
-| `Region` | Optional. `Hamma` = all stores; `Buxoro, Qarshi` = only those regions' stores are shown (+ `#Buxoro` hashtags); `... ostatka bor do'konlarda` = only stores with stock. Store → region mapping: `config.py → STORE_REGIONS`. |
+| `Region` | Optional. `Hamma` = all stores; `Buxoro, Qarshi` = only those regions' stores are shown (+ `#Buxoro` hashtags); `... ostatka bor do'konlarda` = only stores with stock. **Empty** = the bot suggests every region with more than 5 in stock (`REGION_MIN_STOCK`), highest first. Store → region mapping: `config.py → STORE_REGIONS`. |
 | `Comment` | Note shown on the post. A repeated `VM`/`MARKETING` at the start is removed. (Old files without `Department`: the department is read from the start of `Comment`.) |
 | `Модель` / `Наименование` | at least one required |
 | `Бренд`, `Категория`, `Подкатегория`, `PRICE`, `PHOTO_PATH`, `stock` | optional |

@@ -145,6 +145,33 @@ def test_region_filters_store_table(tmp_path):
     assert set(a2.target_stores()) == {"S02", "S07"}  # S01 has 0 -> hidden
 
 
+def test_empty_region_is_suggested_from_stock(tmp_path):
+    # S01+S04 = Buxoro, S02+S05+S10 = Qarshi, S03+S06 = Samarqand, S07-S09 = Toshkent
+    path = tmp_path / "s.xlsx"
+    write_xlsx(path, {
+        "Модель": ["A1", "A2"],
+        "s01": [4, 1], "s04": [3, 1],     # Buxoro 7  | 2
+        "s02": [2, 0], "s05": [2, 0],     # Qarshi 4  | 0
+        "s07": [10, 2], "s08": [5, 1],    # Toshkent 15 | 3
+        "Region": [None, ""],
+        "Department": ["MARKETING", "VM"],
+    })
+    a1, a2 = load_products(path).products
+    assert a1.region.suggested and a1.region.regions == ("Toshkent", "Buxoro")  # >5, highest first
+    caption = build_caption(a1, "w")
+    assert "Hudud (bot tavsiyasi):</b> Toshkent (15) · Buxoro (7)" in caption
+    assert "S02" not in caption  # Qarshi (4) not suggested -> its stores hidden
+    assert "#Toshkent" in caption
+    assert not result_warnings_for(path)
+
+    assert a2.region.suggested and not a2.region.regions
+    assert "yo'q" in build_caption(a2, "w")
+
+
+def result_warnings_for(path):
+    return [w for w in load_products(path).warnings if "Region" in w]
+
+
 def test_unknown_region_warns(tmp_path):
     path = tmp_path / "u.xlsx"
     write_xlsx(path, {"Модель": ["A1"], "s01": [1], "Region": ["Andijon"], "Department": ["VM"]})
