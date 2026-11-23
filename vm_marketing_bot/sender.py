@@ -29,6 +29,8 @@ from .config import DEPARTMENT_TITLES, Settings
 from .excel import LoadResult, Product
 from .media import ImageFetcher, shrink_image
 from .storage import Storage
+from .topics import forget as forget_topic
+from .topics import is_thread_error, thread_for
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -117,14 +119,27 @@ class Sender:
         self.settings = settings
         self.interval = settings.send_delay  # seconds between posts; grows if Telegram complains
 
+    async def _thread(self, chat, section: str, recreate: bool = False) -> int | None:
+        if recreate:
+            forget_topic(self.store, chat, section)
+        return await thread_for(self.bot, self.store, chat, section, self.settings.use_topics)
+
+    async def _send_text(self, chat, text: str, thread: int | None) -> Message:
+        return await tg_retry(
+            lambda: self.bot.send_message(chat_id=chat, text=text, message_thread_id=thread),
+            on_flood=self._slow_down,
+        )
+
     def _slow_down(self, retry_after: int) -> None:
         """Telegram said "too fast" — post slower for the rest of this send."""
         self.interval = min(self.interval + 1.0, MAX_INTERVAL)
         log.info("Slowing down: one post every %.0f s", self.interval)
 
-    async def _send_photo(self, chat, photo, caption: str, keyboard) -> Message:
+    async def _send_photo(self, chat, photo, caption: str, keyboard, thread: int | None = None) -> Message:
         return await tg_retry(
-            lambda: self.bot.send_photo(chat_id=chat, photo=photo, caption=caption, reply_markup=keyboard),
+            lambda: self.bot.send_photo(
+                chat_id=chat, photo=photo, caption=caption, reply_markup=keyboard, message_thread_id=thread
+            ),
             on_flood=self._slow_down,
         )
 
@@ -135,6 +150,7 @@ class Sender:
         caption: str,
         keyboard: InlineKeyboardMarkup | None,
         get_bytes: Callable[[], Awaitable[bytes | None]],
+        thread: int | None = None,
     ) -> tuple[Message, bool, str]:
         """Returns (message, has_photo, text_that_was_sent)."""
         path = product.photo_path
@@ -142,9 +158,9 @@ class Sender:
             file_id = self.store.cached_file_id(path)
             if file_id:
                 try:
-                    return await self._send_photo(chat, file_id, caption, keyboard), True, caption
+                    return await self._send_photo(chat, file_id, caption, keyboard, thread), True, caption
                 except TelegramBadRequest as exc:
-                    if _is_fatal(exc):
+                    if _is_fatal(exc) or is_thread_error(exc):
                         raise
                     log.info("Cached file_id rejected for %s: %s", path, exc)
                     self.store.forget_file_id(path)
@@ -156,18 +172,20 @@ class Sender:
                         payload = await asyncio.to_thread(shrink_image, data, True)
                     try:
                         photo = BufferedInputFile(payload, filename=_filename(product))
-                        msg = await self._send_photo(chat, photo, caption, keyboard)
+                        msg = await self._send_photo(chat, photo, caption, keyboard, thread)
                         if msg.photo:
                             self.store.cache_file_id(path, msg.photo[-1].file_id)
                         return msg, True, caption
                     except TelegramBadRequest as exc:
-                        if _is_fatal(exc):
+                        if _is_fatal(exc) or is_thread_error(exc):
                             raise
                         log.warning("send_photo failed for %s (try %s): %s", product.label, attempt + 1, exc)
 
         text = NO_PHOTO_PREFIX + caption
         msg = await tg_retry(
-            lambda: self.bot.send_message(chat_id=chat, text=text[:TEXT_LIMIT], reply_markup=keyboard),
+            lambda: self.bot.send_message(
+                chat_id=chat, text=text[:TEXT_LIMIT], reply_markup=keyboard, message_thread_id=thread
+            ),
             on_flood=self._slow_down,
         )
         return msg, False, text
@@ -224,6 +242,7 @@ class Sender:
                     prefetch[j] = asyncio.create_task(fetcher.fetch(product.photo_path))
 
             current_dept = None
+            thread: int | None = None
             try:
                 for i, (dept, product) in enumerate(queue):
                     if job.cancelled:
@@ -236,13 +255,18 @@ class Sender:
 
                     if dept != current_dept:
                         current_dept = dept
+                        thread = await self._thread(chat, dept)
                         if not job.sample:
                             header = department_header(dept, job.result.for_department(dept), job.week)
                             try:
                                 await pace()
-                                head_msg = await tg_retry(
-                                    lambda c=chat, h=header: self.bot.send_message(c, h), on_flood=self._slow_down
-                                )
+                                try:
+                                    head_msg = await self._send_text(chat, header, thread)
+                                except TelegramBadRequest as exc:
+                                    if not is_thread_error(exc):
+                                        raise
+                                    thread = await self._thread(chat, dept, recreate=True)
+                                    head_msg = await self._send_text(chat, header, thread)
                                 if run_id is not None:
                                     self.store.add_run_message(run_id, chat, head_msg.message_id)
                             except Exception as exc:
@@ -270,9 +294,18 @@ class Sender:
 
                     try:
                         await pace()
-                        msg, has_photo, sent_text = await self.send_product(
-                            chat, product, caption, keyboard, get_bytes
-                        )
+                        try:
+                            msg, has_photo, sent_text = await self.send_product(
+                                chat, product, caption, keyboard, get_bytes, thread
+                            )
+                        except TelegramBadRequest as exc:
+                            if not is_thread_error(exc):
+                                raise
+                            # someone deleted the topic — make a new one and retry once
+                            thread = await self._thread(chat, dept, recreate=True)
+                            msg, has_photo, sent_text = await self.send_product(
+                                chat, product, caption, keyboard, get_bytes, thread
+                            )
                         job.sent += 1
                         if not has_photo:
                             job.text_only += 1

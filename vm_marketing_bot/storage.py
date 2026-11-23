@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS posts (
     caption     TEXT,
     created_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE TABLE IF NOT EXISTS run_messages (
     run_id     INTEGER NOT NULL,
     chat_id    TEXT NOT NULL,
@@ -87,6 +91,20 @@ class Storage:
     def _all(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
+
+    # ---- small key/value store (forum topic ids) ---------------------------
+    def get_kv(self, key: str) -> str | None:
+        rows = self._all("SELECT value FROM kv WHERE key = ?", (key,))
+        return rows[0]["value"] if rows else None
+
+    def set_kv(self, key: str, value: str) -> None:
+        self._exec(
+            "INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    def del_kv(self, key: str) -> None:
+        self._exec("DELETE FROM kv WHERE key = ?", (key,))
 
     # ---- photo cache -------------------------------------------------------
     def cached_file_id(self, photo_path: str) -> str | None:

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import Bot
 
-from . import reports
+from . import reports, topics
 from .config import now
 from .sender import tg_retry
 from .storage import Storage
@@ -100,8 +100,11 @@ async def maybe_monday_cleanup(bot: Bot, app: App) -> None:
         notify = [target] if target is not None else app.store.run_chats(run_ids)
         for chat in dict.fromkeys(notify):
             try:
+                thread = await topics.thread_for(bot, app.store, chat, "REPORT", settings.use_topics)
                 await bot.send_message(
                     chat,
+                    message_thread_id=thread,
+                    text=
                     f"⚠️ O'tgan haftaning {failed} ta postini o'chirib bo'lmadi.\n"
                     "Botni guruhda <b>admin</b> qiling va <b>\"Delete messages\"</b> huquqini bering — "
                     "Telegram 48 soatdan eski xabarlarni faqat shunda o'chirishga ruxsat beradi.",

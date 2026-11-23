@@ -124,6 +124,8 @@ class Settings:
     cleanup_enabled: bool = True
     cleanup_weekday: int = 0
     cleanup_time: time = time(9, 0)
+    # Forum groups: post VM / MARKETING / reports into separate topics
+    use_topics: bool = True
 
     def target_chat(self, department: str, fallback: int | str) -> int | str:
         chat = self.vm_chat_id if department == "VM" else self.marketing_chat_id
@@ -135,8 +137,8 @@ class Settings:
         return self.report_chat_id or self.group_chat_id or self.vm_chat_id or self.marketing_chat_id
 
     def is_admin(self, user_id: int | None) -> bool:
-        # No ADMIN_IDS configured -> everybody may use admin features.
-        return not self.admin_ids or (user_id in self.admin_ids)
+        # Only users listed in ADMIN_IDS may use the bot. Empty list = nobody.
+        return user_id is not None and user_id in self.admin_ids
 
     def team_ids(self, department: str) -> frozenset[int]:
         return self.vm_team_ids if department == "VM" else self.marketing_team_ids
@@ -202,4 +204,5 @@ def load_settings() -> Settings:
         cleanup_enabled=flag("WEEKLY_CLEANUP"),
         cleanup_weekday=_weekday(_env("CLEANUP_DAY", "monday"), 0),
         cleanup_time=_time(_env("CLEANUP_TIME", "09:00"), time(9, 0)),
+        use_topics=flag("USE_TOPICS"),
     )

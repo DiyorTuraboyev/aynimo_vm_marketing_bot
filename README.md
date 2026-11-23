@@ -12,6 +12,15 @@ Sunday:  bot ──▶ group: "📊 Haftalik hisobot" + Excel
 Monday 09:00: bot ──▶ group: "O'tgan hafta natijasi" + Excel, then deletes last week's product posts
 ```
 
+### Group setup (once)
+
+1. Group → Edit → **Topics: ON**. The bot then creates **🎨 VM**, **📢 MARKETING** and **📊 Hisobotlar**
+   topics itself and posts each department into its own topic (reports into Hisobotlar).
+2. Make the bot an **admin** with **Delete messages** and **Manage topics**.
+3. Only people in `ADMIN_IDS` can use the bot — in the **private chat**. In the group the bot deletes typed
+   commands and join/leave/pin notices, so only products and reports stay there
+   (`/chatid` still answers and disappears after 1 minute).
+
 The Monday cleanup needs the bot to be a group **admin with "Delete messages"** permission (Telegram only lets
 bots delete messages older than 48 hours with that right). Reports are never deleted; history stays in the
 database. Settings: `WEEKLY_CLEANUP`, `CLEANUP_DAY`, `CLEANUP_TIME`.
@@ -36,7 +45,7 @@ See [.env.example](.env.example). The important ones:
 | `BOT_TOKEN` | from @BotFather |
 | `WEBDAV_PASSWORD` | product photo server password |
 | `GROUP_CHAT_ID` | the group for all posts and the Sunday report (`/chatid` inside the group) |
-| `ADMIN_IDS` | who may upload/send |
+| `ADMIN_IDS` | **required** — the only people who can use the bot (empty = nobody) |
 | `VM_TEAM_IDS`, `MARKETING_TEAM_IDS` | who may confirm each department's posts (empty = anyone) |
 | `REPORT_DAY`, `REPORT_TIME`, `TIMEZONE` | default `sunday`, `18:00`, `Asia/Tashkent` |
 

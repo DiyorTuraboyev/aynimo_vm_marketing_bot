@@ -53,16 +53,36 @@ class FakeBot:
             photo=[SimpleNamespace(file_id=f"FID{self.mid}")] if photo else None,
         )
 
-    async def send_photo(self, chat_id, photo, caption, reply_markup=None):
-        self.sent.append(("photo", chat_id, caption, reply_markup))
+    forum = False  # set True to simulate a group with Topics turned on
+    thread_missing: set = set()  # thread ids that "were deleted" in Telegram
+
+    def _check_thread(self, thread):
+        if thread is not None and thread in self.thread_missing:
+            from aiogram.exceptions import TelegramBadRequest
+            from aiogram.methods import SendMessage
+
+            raise TelegramBadRequest(SendMessage(chat_id=0, text="x"), "Bad Request: message thread not found")
+
+    async def get_chat(self, chat_id):
+        return SimpleNamespace(id=chat_id, is_forum=self.forum and chat_id != 555, title="Guruh", full_name="Guruh")
+
+    async def create_forum_topic(self, chat_id, name, icon_color=None):
+        self.mid += 1
+        self.sent.append(("topic", chat_id, name, self.mid))
+        return SimpleNamespace(message_thread_id=self.mid, name=name)
+
+    async def send_photo(self, chat_id, photo, caption, reply_markup=None, message_thread_id=None):
+        self._check_thread(message_thread_id)
+        self.sent.append(("photo", chat_id, caption, reply_markup, message_thread_id))
         return self._msg(True)
 
-    async def send_message(self, chat_id, text, reply_markup=None):
-        self.sent.append(("text", chat_id, text, reply_markup))
+    async def send_message(self, chat_id, text, reply_markup=None, message_thread_id=None):
+        self._check_thread(message_thread_id)
+        self.sent.append(("text", chat_id, text, reply_markup, message_thread_id))
         return self._msg(False)
 
-    async def send_document(self, chat_id, document):
-        self.sent.append(("doc", chat_id, document.filename, document.data))
+    async def send_document(self, chat_id, document, message_thread_id=None):
+        self.sent.append(("doc", chat_id, document.filename, document.data, message_thread_id))
 
     async def edit_message_caption(self, chat_id, message_id, caption, reply_markup=None):
         self.sent.append(("edit", chat_id, message_id, caption))
@@ -87,7 +107,12 @@ class FakeBot:
 
 @pytest.fixture
 def fake_bot():
-    return FakeBot()
+    from vm_marketing_bot import topics
+
+    topics._forum_cache.clear()
+    bot = FakeBot()
+    bot.thread_missing = set()
+    return bot
 
 
 @pytest.fixture

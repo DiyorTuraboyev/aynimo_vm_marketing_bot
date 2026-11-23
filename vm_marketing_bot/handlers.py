@@ -111,11 +111,14 @@ async def targets_text(app: App, bot: Bot, here: int) -> dict[str, str]:
 
 
 async def deny(event: Message | CallbackQuery) -> None:
-    text = "⛔ Bu amal faqat adminlar uchun."
     if isinstance(event, CallbackQuery):
-        await event.answer(text, show_alert=True)
+        await event.answer("⛔ Bu bot faqat adminlar uchun.", show_alert=True)
     elif event.chat.type == "private":
-        await event.answer(text)
+        user_id = event.from_user.id if event.from_user else "?"
+        await event.answer(
+            "⛔ Bu bot faqat adminlar uchun.\n"
+            f"Sizning ID: <code>{user_id}</code> — admin bo'lishingiz kerak bo'lsa, shu raqamni adminga yuboring."
+        )
 
 
 KEEP_UPLOADS = 8  # weekly files kept on the server (512 MB disk) — older ones are deleted
@@ -198,11 +201,7 @@ HELP = (
 @router.message(Command("help"))
 async def cmd_start(message: Message, app: App) -> None:
     if not app.settings.is_admin(message.from_user and message.from_user.id):
-        await message.answer(
-            "👋 Salom! Bu bot VM va Marketing bo'limiga haftalik mahsulotlarni yuboradi.\n"
-            "Postlar ostidagi <b>✅ Bajarildi</b> tugmasini bosishingiz mumkin."
-        )
-        return
+        return await deny(message)
     await message.answer(HELP, reply_markup=start_keyboard(app))
 
 
@@ -249,6 +248,8 @@ async def cmd_cancel(message: Message, app: App) -> None:
 
 @router.message(F.document)
 async def on_document(message: Message, bot: Bot, app: App) -> None:
+    if message.chat.type != "private":
+        return  # the group stays clean: Excel files are sent to the bot in private chat
     doc = message.document
     name = doc.file_name or "file.xlsx"
     if not name.lower().endswith((".xlsx", ".xlsm")):
@@ -310,6 +311,8 @@ async def cb_ask(callback: CallbackQuery, bot: Bot, app: App) -> None:
 
 @router.callback_query(F.data == "back")
 async def cb_back(callback: CallbackQuery, bot: Bot, app: App) -> None:
+    if not app.settings.is_admin(callback.from_user.id):
+        return await deny(callback)
     result = app.loaded.get(callback.from_user.id)
     if not result:
         await callback.answer("Fayl eskirgan, qaytadan yuklang.", show_alert=True)
@@ -322,6 +325,8 @@ async def cb_back(callback: CallbackQuery, bot: Bot, app: App) -> None:
 
 @router.callback_query(F.data == "close")
 async def cb_close(callback: CallbackQuery, app: App) -> None:
+    if not app.settings.is_admin(callback.from_user.id):
+        return await deny(callback)
     app.loaded.pop(callback.from_user.id, None)
     await callback.message.edit_text("❌ Bekor qilindi.")
     await callback.answer()

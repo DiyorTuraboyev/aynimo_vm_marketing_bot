@@ -11,6 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from .config import load_settings
+from .group import router as group_router
 from .handlers import App, router
 from .reports import weekly_report_loop
 from .sender import Sender
@@ -40,7 +41,12 @@ async def main() -> None:
     app = App(settings=settings, store=store, sender=Sender(bot, store, settings))
 
     dp = Dispatcher(app=app)
+    dp.include_router(group_router)  # first: keeps the group clean
     dp.include_router(router)
+
+    if not settings.admin_ids:
+        logging.warning("ADMIN_IDS is empty — nobody can use the bot. Send /chatid to the bot, "
+                        "put your ID into ADMIN_IDS and restart.")
 
     await bot.set_my_commands([
         BotCommand(command="start", description="Bosh menyu"),

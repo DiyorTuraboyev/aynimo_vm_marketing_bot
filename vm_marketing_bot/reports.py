@@ -110,11 +110,21 @@ def _excel(rows: list[dict], by_dept: dict[str, list[dict]]) -> bytes:
 
 
 async def send_report(bot: Bot, app: App, chat_id, run_ids: list[int], title: str) -> None:
+    from . import topics
+
     text, data = await asyncio.to_thread(build_report, app, run_ids, title)
-    await bot.send_message(chat_id, text)
+    thread = await topics.thread_for(bot, app.store, chat_id, "REPORT", app.settings.use_topics)
+    try:
+        await bot.send_message(chat_id, text, message_thread_id=thread)
+    except Exception as exc:
+        if thread is None or not topics.is_thread_error(exc):
+            raise
+        topics.forget(app.store, chat_id, "REPORT")  # topic deleted — recreate
+        thread = await topics.thread_for(bot, app.store, chat_id, "REPORT", app.settings.use_topics)
+        await bot.send_message(chat_id, text, message_thread_id=thread)
     if data:
         name = f"hisobot_{now():%Y%m%d_%H%M}.xlsx"
-        await bot.send_document(chat_id, BufferedInputFile(data, filename=name))
+        await bot.send_document(chat_id, BufferedInputFile(data, filename=name), message_thread_id=thread)
 
 
 def week_title(start: datetime) -> str:
