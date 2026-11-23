@@ -214,6 +214,18 @@ def test_cleanup_warns_when_telegram_refuses(app, template, fake_bot, monkeypatc
     assert warning and "Delete messages" in warning[0][2]
 
 
+def test_flood_control_slows_down(settings, fake_bot, tmp_path):
+    from vm_marketing_bot.sender import MAX_INTERVAL
+
+    sender = Sender(fake_bot, Storage(tmp_path / "s.db"), settings)
+    sender.interval = 3.0
+    sender._slow_down(33)
+    assert sender.interval == 4.0
+    for _ in range(20):
+        sender._slow_down(33)
+    assert sender.interval == MAX_INTERVAL
+
+
 async def _no_sleep(*_):
     return None
 

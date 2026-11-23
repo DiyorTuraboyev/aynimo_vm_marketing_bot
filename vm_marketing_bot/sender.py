@@ -35,6 +35,7 @@ T = TypeVar("T")
 
 PREFETCH = 3  # photos downloaded ahead; kept small for 256 MB hosting plans
 PROGRESS_EVERY_SECONDS = 3.0
+MAX_INTERVAL = 8.0  # never slower than one post per 8 s
 NO_PHOTO_PREFIX = "🖼 <i>Rasm yuklanmadi</i>\n\n"
 
 
@@ -61,12 +62,18 @@ class SendJob:
     fatal: str = ""
 
 
-async def tg_retry(call: Callable[[], Awaitable[T]], attempts: int = 6) -> T:
+async def tg_retry(
+    call: Callable[[], Awaitable[T]],
+    attempts: int = 6,
+    on_flood: Callable[[int], None] | None = None,
+) -> T:
     for attempt in range(attempts):
         try:
             return await call()
         except TelegramRetryAfter as exc:
             log.info("Flood control: sleeping %ss", exc.retry_after)
+            if on_flood is not None:
+                on_flood(exc.retry_after)
             await asyncio.sleep(exc.retry_after + 1)
         except TelegramNetworkError as exc:
             if attempt == attempts - 1:
@@ -108,10 +115,17 @@ class Sender:
         self.bot = bot
         self.store = store
         self.settings = settings
+        self.interval = settings.send_delay  # seconds between posts; grows if Telegram complains
+
+    def _slow_down(self, retry_after: int) -> None:
+        """Telegram said "too fast" — post slower for the rest of this send."""
+        self.interval = min(self.interval + 1.0, MAX_INTERVAL)
+        log.info("Slowing down: one post every %.0f s", self.interval)
 
     async def _send_photo(self, chat, photo, caption: str, keyboard) -> Message:
         return await tg_retry(
-            lambda: self.bot.send_photo(chat_id=chat, photo=photo, caption=caption, reply_markup=keyboard)
+            lambda: self.bot.send_photo(chat_id=chat, photo=photo, caption=caption, reply_markup=keyboard),
+            on_flood=self._slow_down,
         )
 
     async def send_product(
@@ -153,7 +167,8 @@ class Sender:
 
         text = NO_PHOTO_PREFIX + caption
         msg = await tg_retry(
-            lambda: self.bot.send_message(chat_id=chat, text=text[:TEXT_LIMIT], reply_markup=keyboard)
+            lambda: self.bot.send_message(chat_id=chat, text=text[:TEXT_LIMIT], reply_markup=keyboard),
+            on_flood=self._slow_down,
         )
         return msg, False, text
 
@@ -184,6 +199,18 @@ class Sender:
 
         prefetch: dict[int, asyncio.Task] = {}
 
+        # Even pacing under Telegram's group limit (~20 messages/minute). The time spent
+        # downloading the next photo counts towards the gap, so no time is wasted.
+        self.interval = 0.0 if job.sample else self.settings.send_delay
+        last_send = 0.0
+
+        async def pace() -> None:
+            nonlocal last_send
+            wait = self.interval - (time.monotonic() - last_send)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            last_send = time.monotonic()
+
         async with aiohttp.ClientSession() as session:
             fetcher = ImageFetcher(self.settings, session)
 
@@ -212,7 +239,10 @@ class Sender:
                         if not job.sample:
                             header = department_header(dept, job.result.for_department(dept), job.week)
                             try:
-                                head_msg = await tg_retry(lambda c=chat, h=header: self.bot.send_message(c, h))
+                                await pace()
+                                head_msg = await tg_retry(
+                                    lambda c=chat, h=header: self.bot.send_message(c, h), on_flood=self._slow_down
+                                )
                                 if run_id is not None:
                                     self.store.add_run_message(run_id, chat, head_msg.message_id)
                             except Exception as exc:
@@ -238,6 +268,7 @@ class Sender:
                         keyboard = done_keyboard(post_id)
 
                     try:
+                        await pace()
                         msg, has_photo, sent_text = await self.send_product(
                             chat, product, caption, keyboard, get_bytes
                         )
@@ -256,8 +287,6 @@ class Sender:
                         job.failed.append(f"{title} · {product.label}: {exc}")
 
                     job.processed += 1
-                    if self.settings.send_delay:
-                        await asyncio.sleep(self.settings.send_delay)
             except FatalSendError:
                 pass
             finally:

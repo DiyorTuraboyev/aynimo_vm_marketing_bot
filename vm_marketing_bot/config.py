@@ -161,9 +161,10 @@ def load_settings() -> Settings:
         excel = BASE_DIR / excel
 
     try:
-        delay = float(_env("VM_SEND_DELAY", "1.0"))
+        # Telegram allows a bot ~20 messages per minute in one group -> 3 s between posts.
+        delay = float(_env("VM_SEND_DELAY", "3.0"))
     except ValueError:
-        delay = 1.0
+        delay = 3.0
 
     def flag(name: str, default: str = "1") -> bool:
         return _env(name, default).lower() not in ("0", "false", "no", "off")
