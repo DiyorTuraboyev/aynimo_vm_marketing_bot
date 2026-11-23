@@ -18,8 +18,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pandas as pd
-
 from .config import DEPARTMENTS
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
@@ -64,11 +62,6 @@ def is_empty(value) -> bool:
         return True
     if isinstance(value, float) and math.isnan(value):
         return True
-    try:
-        if pd.isna(value):
-            return True
-    except (TypeError, ValueError):
-        pass
     return str(value).strip().lower() in EMPTY_MARKS
 
 
@@ -169,9 +162,26 @@ class ExcelFormatError(ValueError):
     pass
 
 
-def _find_header(raw: pd.DataFrame) -> tuple[int, dict[str, int], dict[str, int], dict[str, int]] | None:
+def _read_sheets(path: Path) -> list[tuple[str, list[list]]]:
+    """All sheets as lists of rows (values only, formulas -> cached values).
+    Uses openpyxl directly: pandas/numpy cost too much memory on small hosting plans."""
+    from openpyxl import load_workbook  # lazy: not needed in memory while the bot idles
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheets = []
+        for ws in wb.worksheets:
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+            width = max((len(r) for r in rows), default=0)
+            sheets.append((ws.title, [r + [None] * (width - len(r)) for r in rows]))
+        return sheets
+    finally:
+        wb.close()
+
+
+def _find_header(raw: list[list]) -> tuple[int, dict[str, int], dict[str, int], dict[str, int]] | None:
     for idx in range(min(len(raw), 15)):
-        cells = [_norm(v) if not is_empty(v) else "" for v in raw.iloc[idx].tolist()]
+        cells = [_norm(v) if not is_empty(v) else "" for v in raw[idx]]
         fields: dict[str, int] = {}
         stores: dict[str, int] = {}
         warehouses: dict[str, int] = {}
@@ -197,9 +207,8 @@ def load_products(path: str | Path) -> LoadResult:
     if not path.exists():
         raise FileNotFoundError(f"Fayl topilmadi: {path.name}")
 
-    sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=object)
     found = None
-    for sheet_name, raw in sheets.items():
+    for sheet_name, raw in _read_sheets(path):
         header = _find_header(raw)
         if header:
             found = (sheet_name, raw, header)
@@ -224,7 +233,7 @@ def load_products(path: str | Path) -> LoadResult:
         return values[col] if col is not None and col < len(values) else None
 
     for idx in range(header_idx + 1, len(raw)):
-        values = raw.iloc[idx].tolist()
+        values = raw[idx]
         excel_row = idx + 1
         name = clean_text(cell(values, "name"))
         model = clean_text(cell(values, "model"))

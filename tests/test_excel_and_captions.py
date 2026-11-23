@@ -10,6 +10,19 @@ from vm_marketing_bot.excel import load_products, parse_departments, parse_int
 ALLOWED_TAGS = {"b", "i", "code", "pre"}
 
 
+def write_xlsx(path, columns: dict[str, list]) -> None:
+    """Small helper: {"Header": [values...]} -> Excel file (first row = headers)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    headers = list(columns)
+    ws.append(headers)
+    for i in range(max(len(v) for v in columns.values())):
+        ws.append([columns[h][i] if i < len(columns[h]) else None for h in headers])
+    wb.save(path)
+
+
 def assert_valid_telegram_html(text: str) -> None:
     stack = []
 
@@ -83,14 +96,12 @@ def test_template_department_column(template):
 
 
 def test_department_column_rules(tmp_path):
-    import pandas as pd
-
     path = tmp_path / "f.xlsx"
-    pd.DataFrame({
+    write_xlsx(path, {
         "Модель": ["A1", "A2", "A3", "A4", "A5", "A6"],
         "Department": ["VM", "marketing", "VM/MARKETING", "", "Boshqa", "VM"],
         "Comment": ["Vitrina oldiga", "MARKETING Reklama", "", "MARKETING eski usul", "x", "MARKETING ziddiyat"],
-    }).to_excel(path, index=False)
+    })
     result = load_products(path)
     got = [(p.model, p.department, p.note) for p in result.products]
     assert got == [
@@ -106,23 +117,19 @@ def test_department_column_rules(tmp_path):
 
 
 def test_missing_department_and_comment_columns(tmp_path):
-    import pandas as pd
-
     path = tmp_path / "bad.xlsx"
-    pd.DataFrame({"Модель": ["X1"], "PRICE": [100]}).to_excel(path, index=False)
+    write_xlsx(path, {"Модель": ["X1"], "PRICE": [100]})
     with pytest.raises(ValueError):
         load_products(path)
 
 
 def test_rows_without_department_are_skipped(tmp_path):
-    import pandas as pd
-
     path = tmp_path / "f.xlsx"
-    pd.DataFrame({
+    write_xlsx(path, {
         "Модель": ["A1", "A2", "A3"],
         "s01": [1, 0, "-"],
         "Comment": ["VM", "", "nimadir"],
-    }).to_excel(path, index=False)
+    })
     result = load_products(path)
     assert [p.model for p in result.products] == ["A1"]
     assert len(result.skipped) == 2

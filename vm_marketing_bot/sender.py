@@ -33,7 +33,7 @@ from .storage import Storage
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PREFETCH = 6
+PREFETCH = 3  # photos downloaded ahead; kept small for 256 MB hosting plans
 PROGRESS_EVERY_SECONDS = 3.0
 NO_PHOTO_PREFIX = "🖼 <i>Rasm yuklanmadi</i>\n\n"
 

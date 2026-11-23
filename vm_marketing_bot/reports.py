@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING
 
-import pandas as pd
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
@@ -45,27 +44,25 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
     if not rows:
         return f"📊 <b>{escape(title)}</b>\n\nBu davrda hech narsa yuborilmagan.", None
 
-    df = pd.DataFrame(rows)
     lines = [f"📊 <b>{escape(title)}</b>", ""]
+    by_dept = {dept: [r for r in rows if r["department"] == dept] for dept in DEPARTMENTS}
 
-    for dept in DEPARTMENTS:
-        part = df[df["department"] == dept]
-        if part.empty:
+    for dept, part in by_dept.items():
+        if not part:
             continue
         icon, name = DEPARTMENT_TITLES[dept]
-        done = int((part["done_count"] > 0).sum())
-        total = len(part)
-        lines.append(f"{icon} <b>{name}</b>: {done}/{total} bajarildi ({_percent(done, total)})")
-        lines.append(_bar(done, total))
+        done = sum(1 for r in part if r["done_count"])
+        lines.append(f"{icon} <b>{name}</b>: {done}/{len(part)} bajarildi ({_percent(done, len(part))})")
+        lines.append(_bar(done, len(part)))
 
-    for dept in DEPARTMENTS:
-        pending = df[(df["department"] == dept) & (df["done_count"] == 0)]
-        if pending.empty:
+    for dept, part in by_dept.items():
+        pending = [r for r in part if not r["done_count"]]
+        if not pending:
             continue
-        icon, name = DEPARTMENT_TITLES[dept]
+        _, name = DEPARTMENT_TITLES[dept]
         lines.append("")
         lines.append(f"⏳ <b>{name} — bajarilmagan ({len(pending)}):</b>")
-        for _, r in pending.head(15).iterrows():
+        for r in pending[:15]:
             label = r["model"] or ""
             if r["name"] and r["name"] != r["model"]:
                 label = f"{label} — {r['name']}" if label else r["name"]
@@ -87,36 +84,43 @@ def build_report(app: App, run_ids: list[int], title: str) -> tuple[str, bytes |
     if len(text) > TEXT_LIMIT:
         text = text[: text.rfind("\n", 0, TEXT_LIMIT - 10)] + "\n…"
 
-    return text, _excel(df)
+    return text, _excel(rows, by_dept)
 
 
-def _excel(df: pd.DataFrame) -> bytes:
-    df = df.rename(columns={
-        "run_id": "Run", "week": "Hafta", "department": "Bo'lim", "excel_row": "Excel qator",
-        "model": "Модель", "name": "Наименование", "note": "Izoh", "chat_id": "Chat",
-        "message_id": "Xabar ID", "created_at": "Yuborilgan", "done_count": "Bajarganlar soni",
-        "done_by": "Kim bajardi",
-    })
-    df.insert(
-        df.columns.get_loc("Bajarganlar soni"), "Holat",
-        df["Bajarganlar soni"].map(lambda n: "✅ Bajarildi" if n else "⏳ Bajarilmagan"),
-    )
-    summary = (
-        df.groupby("Bo'lim")
-        .agg(Jami=("Holat", "size"), Bajarildi=("Bajarganlar soni", lambda s: int((s > 0).sum())))
-        .reset_index()
-    )
-    summary["Foiz"] = (summary["Bajarildi"] * 100 / summary["Jami"]).round().astype(int).astype(str) + "%"
+EXCEL_COLUMNS = [
+    ("run_id", "Run"), ("week", "Hafta"), ("department", "Bo'lim"), ("excel_row", "Excel qator"),
+    ("model", "Модель"), ("name", "Наименование"), ("note", "Izoh"), ("chat_id", "Chat"),
+    ("message_id", "Xabar ID"), ("created_at", "Yuborilgan"), ("status", "Holat"),
+    ("done_count", "Bajarganlar soni"), ("done_by", "Kim bajardi"),
+]
+
+
+def _excel(rows: list[dict], by_dept: dict[str, list[dict]]) -> bytes:
+    from openpyxl import Workbook  # lazy import keeps idle memory low
+
+    wb = Workbook()
+    summary = wb.active
+    summary.title = "Xulosa"
+    summary.append(["Bo'lim", "Jami", "Bajarildi", "Foiz"])
+    for dept, part in by_dept.items():
+        if part:
+            done = sum(1 for r in part if r["done_count"])
+            summary.append([dept, len(part), done, _percent(done, len(part))])
+
+    sheet = wb.create_sheet("Mahsulotlar")
+    sheet.append([title for _, title in EXCEL_COLUMNS])
+    for r in rows:
+        r = dict(r, status="✅ Bajarildi" if r["done_count"] else "⏳ Bajarilmagan")
+        sheet.append([r.get(key) for key, _ in EXCEL_COLUMNS])
+
+    for ws in wb.worksheets:
+        for col in ws.columns:
+            width = max(len(str(c.value or "")) for c in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max(10, width + 2), 60)
+        ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        summary.to_excel(writer, index=False, sheet_name="Xulosa")
-        df.to_excel(writer, index=False, sheet_name="Mahsulotlar")
-        for sheet in writer.sheets.values():
-            for col in sheet.columns:
-                width = max(len(str(c.value or "")) for c in col)
-                sheet.column_dimensions[col[0].column_letter].width = min(max(10, width + 2), 60)
-            sheet.freeze_panes = "A2"
+    wb.save(buf)
     return buf.getvalue()
 
 

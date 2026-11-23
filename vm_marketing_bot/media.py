@@ -34,6 +34,9 @@ def shrink_image(data: bytes, force: bool = False) -> bytes:
         from PIL import Image
 
         with Image.open(io.BytesIO(data)) as img:
+            # JPEG: decode directly at reduced size — a 6000px photo would otherwise
+            # need ~100 MB of RAM to decode on a 256 MB hosting plan.
+            img.draft("RGB", (MAX_SIDE, MAX_SIDE))
             img = img.convert("RGB")
             img.thumbnail((MAX_SIDE, MAX_SIDE))
             out = io.BytesIO()
@@ -45,7 +48,7 @@ def shrink_image(data: bytes, force: bool = False) -> bytes:
 
 
 class ImageFetcher:
-    def __init__(self, settings: Settings, session: aiohttp.ClientSession, parallel: int = 4):
+    def __init__(self, settings: Settings, session: aiohttp.ClientSession, parallel: int = 2):
         self._settings = settings
         self._session = session
         token = base64.b64encode(f"{settings.webdav_user}:{settings.webdav_password}".encode()).decode()
